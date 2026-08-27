@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "fields": {
+    "FIRST NAME/GIVEN NAME": {
+      "profileField": "firstName",
+      "aliases": ["first name", "firstname", "first_name", "given name", "fname"],
+      "autofill": true,
+      "sensitivity": "personal",
+      "transform": "text"
+    },
+    "LAST NAME": {
+      "profileField": "lastName",
+      "aliases": ["last name", "lastname", "last_name", "surname", "family name", "lname"],
+      "autofill": true,
+      "sensitivity": "personal",
+      "transform": "text"
+    },
+    "PHONE": {
+      "profileField": "phone",
+      "aliases": ["phone", "phone number", "mobile phone", "mobile", "telephone", "cell phone"],
+      "autofill": true,
+      "sensitivity": "personal",
+      "transform": "phone",
+      "contextRestrictions": ["affirmative-phone-semantics-required"]
+    },
+    "EMAIL": {
+      "profileField": "email",
+      "aliases": ["email", "email address", "e-mail"],
+      "autofill": true,
+      "sensitivity": "personal",
+      "transform": "email"
+    },
+    "ADDRESS": {
+      "profileField": "address",
+      "aliases": ["street address", "address line 1", "address1", "street", "address"],
+      "autofill": true,
+      "sensitivity": "personal",
+      "transform": "text"
+    },
+    "CITY": {
+      "profileField": "city",
+      "aliases": ["city", "town"],
+      "autofill": true,
+      "sensitivity": "personal",
+      "transform": "text"
+    },
+    "STATE": {
+      "profileField": "state",
+      "aliases": ["state", "province", "region"],
+      "autofill": true,
+      "sensitivity": "personal",
+      "transform": "state"
+    },
+    "ZIP": {
+      "profileField": "zip",
+      "aliases": ["zip code", "zipcode", "zip", "postal code", "postcode"],
+      "autofill": true,
+      "sensitivity": "personal",
+      "transform": "postal-code"
+    },
+    "DOB": {
+      "profileField": "dob",
+      "aliases": ["dob", "date of birth", "birth date", "birthdate", "birthday", "mm/dd/yyyy"],
+      "autofill": true,
+      "sensitivity": "private",
+      "transform": "date-of-birth",
+      "contextRestrictions": ["explicit-birth-semantics-required", "never-log-full-value"]
+    },
+    "OCCUPATION": {
+      "profileField": "occupation",
+      "aliases": ["occupation", "profession", "job title", "position", "employment title", "work title", "what do you do", "current occupation"],
+      "autofill": true,
+      "sensitivity": "private",
+      "transform": "text",
+      "contextRestrictions": ["not-employer"]
+    },
+    "ANNUAL INCOME": {
+      "profileField": "annualIncome",
+      "aliases": ["annual income", "yearly income", "gross annual income", "annual gross income", "income per year", "yearly earnings", "annual earnings"],
+      "autofill": true,
+      "sensitivity": "private",
+      "transform": "annual-income",
+      "contextRestrictions": ["annual-or-yearly-only", "never-log-full-value"]
+    },
+    "PASSWORD": {
+      "profileField": "password",
+      "aliases": ["create password", "new password", "choose password", "password", "create a password", "confirm password", "re-enter password", "verify password"],
+      "autofill": true,
+      "sensitivity": "credential",
+      "transform": "password",
+      "contextRestrictions": ["registration-only", "never-log", "same-value-for-confirmation"]
+    }
+  },
+  "restrictedAliases": [
+    "ssn",
+    "social security number",
+    "social security",
+    "tin",
+    "tax id",
+    "government id",
+    "passport",
+    "driver license",
+    "driver's license",
+    "bank account",
+    "routing number",
+    "card number",
+    "cvv",
+    "security answer",
+    "pin"
+  ]
+}

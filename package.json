@@ -1,0 +1,37 @@
+{
+  "name": "mag-signup-automation",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local, human-assisted browser automation for the MAG signup workbook.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup": "npm run setup:chromium && tsx src/setup.ts",
+    "setup:chromium": "playwright install chromium",
+    "start": "tsx src/index.ts",
+    "resume": "tsx src/index.ts",
+    "init": "tsx src/cli/init.ts",
+    "doctor": "tsx src/cli/doctor.ts",
+    "backup": "tsx src/cli/backup.ts",
+    "restore": "tsx src/cli/restore.ts",
+    "version": "tsx src/cli/version.ts",
+    "safety:scan": "node scripts/check-git-safety.mjs",
+    "validate:template": "tsx src/cli/validate-template.ts",
+    "reset": "tsx src/reset.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "tsx --test --test-concurrency=1 tests/**/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "playwright": "^1.55.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

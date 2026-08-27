@@ -1,0 +1,16 @@
+{
+  "headless": false,
+  "browserChannel": "chrome",
+  "workerCount": 1,
+  "navigationTimeoutMs": 30000,
+  "navigationRetryTimeoutMs": 60000,
+  "navigationRetries": 2,
+  "retryDelayMs": 4000,
+  "siteDelayMinMs": 1000,
+  "siteDelayMaxMs": 2500,
+  "maxFormSteps": 12,
+  "maxRepeatedPageState": 2,
+  "screenshotOnError": false,
+  "retryCount": 2,
+  "dryRun": false
+}
