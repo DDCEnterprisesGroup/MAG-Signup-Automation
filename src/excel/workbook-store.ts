@@ -177,14 +177,13 @@ function parseSharedStrings(xml: string): string[] {
 
 export function parseWorksheetXml(xml: string, sharedStrings: string[] = []): SheetValues {
   const values: SheetValues = new Map();
-  const cells = xml.matchAll(
-    /<(?:\w+:)?c\b([^>]*?)\/>|<(?:\w+:)?c\b([^>]*?)>([\s\S]*?)<\/(?:\w+:)?c>/g,
-  );
+  const cells = xml.matchAll(/<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g);
   for (const match of cells) {
-    const attributes = match[1] ?? match[2] ?? "";
+    const body = match[2];
+    if (body === undefined) continue;
+    const attributes = match[1] ?? "";
     const address = /\br="([A-Z]+\d+)"/.exec(attributes)?.[1];
     if (!address) continue;
-    const body = match[3] ?? "";
     const type = /\bt="([^"]+)"/.exec(attributes)?.[1] ?? "";
     let raw = /<(?:\w+:)?v\b[^>]*>([\s\S]*?)<\/(?:\w+:)?v>/.exec(body)?.[1] ?? "";
     if (type === "inlineStr") {
@@ -193,7 +192,7 @@ export function parseWorksheetXml(xml: string, sharedStrings: string[] = []): Sh
     let value = decodeXml(raw);
     if (type === "s") value = sharedStrings[Number.parseInt(value, 10)] ?? "";
     else if (!type && /^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value)) value = String(Number(value));
-    values.set(address, value);
+    if (value !== "") values.set(address, value);
   }
   return values;
 }

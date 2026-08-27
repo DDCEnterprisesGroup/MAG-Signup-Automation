@@ -1,6 +1,6 @@
 # MAG Signup Automation
 
-MAG Automation v1.1.0 is a local, workbook-driven, browser-assisted signup framework for Windows and macOS. It reads approved profile values and target sites from an Excel workbook, fills fields only when the match and page context are confident, checkpoints every Person ID + Site ID attempt, and resumes without repeating completed registrations.
+MAG Automation v1.1.1 is a local, workbook-driven, browser-assisted signup framework for Windows and macOS. It reads approved profile values and target sites from an Excel workbook, fills fields only when the match and page context are confident, checkpoints every Person ID + Site ID attempt, and resumes without repeating completed registrations.
 
 The browser is visible by default. MAG pauses for CAPTCHA, verification, restricted data, required consent, unknown required fields, or ambiguous outcomes. During human handoff it watches the page continuously: a manual Next can resume automation, and a confidently confirmed manual Submit can checkpoint completion and move to the next eligible site without requiring Enter. Enter remains a fallback.
 
