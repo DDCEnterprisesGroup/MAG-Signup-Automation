@@ -81,7 +81,7 @@ case "$command" in
   backup) cd "$PROJECT_ROOT"; exec npm run backup ;;
   reconcile) cd "$PROJECT_ROOT"; npm run inventory; exec npm run reconcile ;;
   dashboard) shift; cd "$PROJECT_ROOT"; exec npm run status -- "$@" ;;
-  handoffs) cd "$PROJECT_ROOT"; exec npm run handoffs -- "$@" ;;
+  handoffs) shift; cd "$PROJECT_ROOT"; exec npm run handoffs -- "$@" ;;
   handoff)
     shift
     [ "$#" -eq 3 ] || { echo "Usage: mag handoff <resume|skip> <personId> <siteId>" >&2; exit 2; }
