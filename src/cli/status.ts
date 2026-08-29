@@ -20,7 +20,10 @@ async function main(): Promise<void> {
     );
     let browser: { status: "HEALTHY" | "FAILED"; source?: string; detail?: string };
     try {
-      const launched = await launchCompatibleBrowser(config.browserChannel);
+      // macOS Chrome startup can legitimately take 10–15s after launchd/GUI
+      // contention; keep the health probe bounded without changing workflow
+      // navigation or production worker behavior.
+      const launched = await launchCompatibleBrowser(config.browserChannel, { headless: true, timeout: 30_000 });
       await launched.browser.close();
       browser = { status: "HEALTHY", source: launched.source };
     } catch (error) {
