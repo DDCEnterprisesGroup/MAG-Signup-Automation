@@ -49,7 +49,7 @@ export function buildOperationsStatus(
       queued: people.filter((person) => ["", "PENDING"].includes(person.status.trim().toUpperCase())).length,
       active: people.filter((person) => ["IN PROGRESS", "WAITING FOR HUMAN"].includes(person.status.trim().toUpperCase())).length,
       completed: people.filter((person) => person.status.trim().toUpperCase() === "COMPLETED").length,
-      failed: people.filter((person) => person.status.trim().toUpperCase() === "FAILED").length,
+      failed: people.filter((person) => ["FAILED", "ERROR"].includes(person.status.trim().toUpperCase())).length,
       skipped: people.filter((person) => person.status.trim().toUpperCase() === "SKIPPED").length,
     },
     attempts: counts,

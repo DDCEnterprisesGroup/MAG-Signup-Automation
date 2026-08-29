@@ -38,7 +38,7 @@ async function main(): Promise<void> {
       try { const category = (JSON.parse(line) as { errorCategory?: string }).errorCategory; if (category) recentErrorCategories[category] = (recentErrorCategories[category] ?? 0) + 1; } catch { /* Ignore partial log lines. */ }
     }
     const lastReconciliation = await stat(config.reconciliationStatePath).then((value) => value.mtime.toISOString()).catch(() => null);
-    const rendered = JSON.stringify({ checkedAt: new Date().toISOString(), browser,
+    const rendered = JSON.stringify({ checkedAt: new Date().toISOString(), workbookAvailable: true, browser,
       worker: { status: workerWasRunning ? "ACTIVE" : "STOPPED", configuredCount: config.workerCount,
         lastActivity: logs.map((log) => log.modified).sort().at(-1) ?? null },
       ingestion: { processed: ledger.length, duplicatesPrevented: ledger.filter((entry) => entry.result === "IDEMPOTENT").length },

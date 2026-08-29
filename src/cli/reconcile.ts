@@ -7,7 +7,11 @@ const workbook = new WorkbookStore(config.workbookPath);
 await workbook.open();
 try {
   const registry = await ensureFieldRegistry(config.projectRoot, config.fieldRegistryPath);
-  console.log(JSON.stringify(await workbook.reconcile(registry, config.reconciliationStatePath), null, 2));
+  const report = await workbook.reconcile(registry, config.reconciliationStatePath);
+  console.log(JSON.stringify({ peopleAssigned: report.peopleAssigned.length, sitesAssigned: report.sitesAssigned.length,
+    peopleDefaultedPending: report.peopleDefaultedPending.length, sitesDefaultedActive: report.sitesDefaultedActive.length,
+    highConfidenceDuplicates: report.duplicateSites.length, unknownFields: report.unknownFields,
+    restrictedFields: report.restrictedFields, changedPeople: report.changedPersonIds.length, changedSites: report.changedSiteIds.length }, null, 2));
 } finally {
   await workbook.release();
 }

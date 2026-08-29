@@ -91,8 +91,8 @@ export class WorkflowEngine {
     this.stopRequested = true;
   }
 
-  async run(selectedPersonIds?: ReadonlySet<string>): Promise<RunStats> {
-    const sites = await this.prepareEligibleSites();
+  async run(selectedPersonIds?: ReadonlySet<string>, selectedSiteIds?: ReadonlySet<string>): Promise<RunStats> {
+    const sites = await this.prepareEligibleSites(selectedSiteIds);
     const people = this.workbook.getPeople().filter((person) => !selectedPersonIds || selectedPersonIds.has(person.id));
     console.log(`Loaded ${people.length} processable person(s) and ${sites.length} eligible site(s).`);
     if (this.config.dryRun) console.log("DRY RUN is active: final submission controls require manual action.");
@@ -112,14 +112,15 @@ export class WorkflowEngine {
     return { ...this.stats };
   }
 
-  private async prepareEligibleSites(): Promise<Site[]> {
+  private async prepareEligibleSites(selectedSiteIds?: ReadonlySet<string>): Promise<Site[]> {
     const candidates = this.workbook
       .getSites()
       .filter(
         (site) =>
           site.active &&
           !terminalSiteStatuses.has(site.status.trim().toUpperCase()) &&
-          !this.workbook.isSiteGloballyExcluded(site.id),
+          !this.workbook.isSiteGloballyExcluded(site.id) &&
+          (!selectedSiteIds || selectedSiteIds.has(site.id)),
       );
     const canonicalByUrl = new Map<string, Site>();
     const eligible: Site[] = [];
@@ -202,8 +203,12 @@ export class WorkflowEngine {
         await delay(randomDelay(this.config.siteDelayMinMs, this.config.siteDelayMaxMs));
       }
       await this.workbook.updatePersonSummary(person);
-      await this.workbook.updatePerson(person, "COMPLETED");
-      console.log(`${person.id} | All currently processable sites finished | COMPLETED`);
+      const latest = sites.map((site) => this.workbook.getLatestAttempt(person.id, site.id));
+      const pendingRetry = latest.some((attempt) => !attempt || (attempt.retryEligible === "YES" && attempt.status !== "COMPLETED"));
+      const waiting = latest.some((attempt) => attempt?.status === "WAITING FOR HUMAN");
+      const finalStatus = waiting ? "WAITING FOR HUMAN" : pendingRetry ? "PENDING" : "COMPLETED";
+      await this.workbook.updatePerson(person, finalStatus);
+      console.log(`${person.id} | Current site set finished | ${finalStatus}`);
     } finally {
       await browser.close();
     }
@@ -361,7 +366,7 @@ export class WorkflowEngine {
       const category = classifyNavigationError(error);
       await browser.screenshotIfSafe(site, attempt.formStep, safeToScreenshot, category).catch(() => undefined);
       if (category === "REDIRECT_LOOP") return await this.markInvalid(site, attempt, category, finalUrl, "Redirect loop detected");
-      return await this.markTemporary(site, attempt, category, finalUrl, category);
+      return await this.markTemporary(site, attempt, category, finalUrl, error instanceof Error ? error.message : category);
     }
   }
 

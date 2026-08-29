@@ -64,4 +64,4 @@ scripts/magctl.sh reconcile
 scripts/magctl.sh backup
 ~~~
 
-Set `MAG_DATA_DIR` and `MAG_WORKBOOK_PATH` in the calling environment when the operational workbook is not in the standard Application Support directory. `scripts/com.ddc.mag.plist.example` is a launchd template; replace its two placeholders with absolute paths, validate it with `plutil`, and only then install it in `~/Library/LaunchAgents`. Do not enable it until supervised acceptance is complete because `run` processes all eligible records.
+Set `MAG_DATA_DIR` and `MAG_WORKBOOK_PATH` in the calling environment when the operational workbook is not in the standard Application Support directory. `scripts/com.ddc.mag.plist.example` is a launchd template; replace its placeholders with absolute project, data, workbook, and executable-search paths, validate it with `plutil`, and only then install it in `~/Library/LaunchAgents`. The launch agent refreshes status at login and never starts signup processing; an operator must still run `mag` and choose a person explicitly.

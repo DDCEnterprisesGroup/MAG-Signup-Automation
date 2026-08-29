@@ -23,6 +23,12 @@ async function main(): Promise<void> {
     const registry = await ensureFieldRegistry(config.projectRoot, config.fieldRegistryPath);
     const reconciliation = await workbook.reconcile(registry, config.reconciliationStatePath);
     const eligibleSites = workbook.getSites().filter((site) => site.active && site.status.trim().toUpperCase() !== "DUPLICATE");
+    const siteIndex = process.argv.indexOf("--site");
+    const requestedSiteId = siteIndex >= 0 ? process.argv[siteIndex + 1]?.trim().toUpperCase() : undefined;
+    if (siteIndex >= 0 && !requestedSiteId) throw new Error("--site requires a Site ID, for example --site S0001.");
+    if (requestedSiteId && !eligibleSites.some((site) => site.id.toUpperCase() === requestedSiteId)) {
+      throw new Error(`Eligible Site ID not found: ${requestedSiteId}.`);
+    }
     const packageJson = JSON.parse(await readFile(path.join(config.projectRoot, "package.json"), "utf8")) as { version: string };
     const selection = await selectPeople(workbook, eligibleSites, packageJson.version);
     if (selection.mode === "quit") {
@@ -39,7 +45,7 @@ async function main(): Promise<void> {
     if (reconciliation.restrictedFields.length > 0) {
       console.warn(`Restricted workbook field(s) remain manual-only: ${reconciliation.restrictedFields.join(", ")}`);
     }
-    const stats = await engine.run(new Set(selection.personIds));
+    const stats = await engine.run(new Set(selection.personIds), requestedSiteId ? new Set([requestedSiteId]) : undefined);
     console.log(
       `Run finished | completed=${stats.completed} failed=${stats.failed} waiting=${stats.waitingForHuman} skipped=${stats.skipped}`,
     );

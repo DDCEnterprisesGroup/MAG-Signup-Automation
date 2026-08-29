@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
 import { stdin as input, stdout as output } from "node:process";
 import type { Page } from "playwright";
 import type { AttemptRecord, HumanHandoffReason, PersonProfile, Site } from "../types/models.js";
@@ -78,6 +79,7 @@ export async function waitForOperator(
       output.write(`\n${result.reason}. Remaining in WAITING_FOR_HUMAN.\n`);
       output.write("Review the page and act again, or press Enter to request a re-scan.\n> ");
       baseline = result.snapshot;
+      await delay(1_000);
     }
   } finally {
     readline.close();

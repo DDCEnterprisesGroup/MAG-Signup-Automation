@@ -17,6 +17,7 @@
     "status": "tsx src/cli/status.ts",
     "ingest": "tsx src/cli/ingest.ts",
     "reconcile": "tsx src/cli/reconcile.ts",
+    "inventory": "tsx src/cli/site-audit.ts",
     "backup": "tsx src/cli/backup.ts",
     "restore": "tsx src/cli/restore.ts",
     "version": "tsx src/cli/version.ts",

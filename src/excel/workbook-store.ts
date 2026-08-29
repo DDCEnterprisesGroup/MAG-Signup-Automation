@@ -18,6 +18,7 @@ import type {
   SiteIssue,
 } from "../types/models.js";
 import { appendNote, normalizeUrl, safeUrl } from "../utils/text.js";
+import { siteRowClass } from "../operations/site-inventory.js";
 
 const SHEETS = {
   sites: "Sheet 1 Sites",
@@ -523,6 +524,7 @@ export class WorkbookStore {
       changedPersonIds: [],
       changedSiteIds: [],
     };
+    let workbookChanged = false;
 
     for (const header of peopleHeaders.keys()) {
       if (PEOPLE_SYSTEM_HEADERS.has(header)) continue;
@@ -542,12 +544,14 @@ export class WorkbookStore {
         const idColumn = headerColumn(peopleHeaders, "ID");
         this.setCell(SHEETS.people, `${columnLetter(idColumn - 1)}${row}`, id);
         report.peopleAssigned.push(id);
+        workbookChanged = true;
       }
       historicalPersonIds.add(id);
       if (!valueByHeader(peopleSheet, peopleHeaders, row, "STATUS")) {
         const statusColumn = headerColumn(peopleHeaders, "STATUS");
         this.setCell(SHEETS.people, `${columnLetter(statusColumn - 1)}${row}`, "PENDING");
         report.peopleDefaultedPending.push(id);
+        workbookChanged = true;
       }
     }
 
@@ -563,12 +567,14 @@ export class WorkbookStore {
         const idColumn = headerColumn(siteHeaders, "SITE ID");
         this.setCell(SHEETS.sites, `${columnLetter(idColumn - 1)}${row}`, id);
         report.sitesAssigned.push(id);
+        workbookChanged = true;
       }
       historicalSiteIds.add(id);
       if (!valueByHeader(sitesSheet, siteHeaders, row, "ACTIVE")) {
         const activeColumn = headerColumn(siteHeaders, "ACTIVE");
         this.setCell(SHEETS.sites, `${columnLetter(activeColumn - 1)}${row}`, "YES");
         report.sitesDefaultedActive.push(id);
+        workbookChanged = true;
       }
       let normalized = "";
       try {
@@ -578,21 +584,19 @@ export class WorkbookStore {
       }
       const canonicalId = canonicalUrls.get(normalized);
       if (canonicalId) {
-        this.setCell(SHEETS.sites, `${columnLetter(headerColumn(siteHeaders, "ACTIVE") - 1)}${row}`, "NO");
-        this.setCell(SHEETS.sites, `${columnLetter(headerColumn(siteHeaders, "SITE STATUS") - 1)}${row}`, "DUPLICATE");
+        if (valueByHeader(sitesSheet, siteHeaders, row, "ACTIVE").toUpperCase() !== "NO" ||
+            valueByHeader(sitesSheet, siteHeaders, row, "SITE STATUS").toUpperCase() !== "DUPLICATE") {
+          this.setCell(SHEETS.sites, `${columnLetter(headerColumn(siteHeaders, "ACTIVE") - 1)}${row}`, "NO");
+          this.setCell(SHEETS.sites, `${columnLetter(headerColumn(siteHeaders, "SITE STATUS") - 1)}${row}`, "DUPLICATE");
+          workbookChanged = true;
+        }
         report.duplicateSites.push({ duplicateId: id, canonicalId });
       } else {
         canonicalUrls.set(normalized, id);
       }
     }
 
-    if (
-      report.peopleAssigned.length ||
-      report.sitesAssigned.length ||
-      report.peopleDefaultedPending.length ||
-      report.sitesDefaultedActive.length ||
-      report.duplicateSites.length
-    ) {
+    if (workbookChanged) {
       await this.checkpoint();
       this.loadRows();
     }
@@ -652,6 +656,10 @@ export class WorkbookStore {
   }
 
   getSites(): readonly Site[] {
+    return this.sites.filter((site) => siteRowClass(site) !== "RESERVED");
+  }
+
+  getSitesIncludingReserved(): readonly Site[] {
     return this.sites;
   }
 
