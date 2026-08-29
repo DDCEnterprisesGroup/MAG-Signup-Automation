@@ -66,6 +66,22 @@ export interface PersonProfile {
   lastUpdated: string;
 }
 
+export interface SignupIntake {
+  requestId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  dob?: string;
+  occupation?: string;
+  annualIncome?: string;
+  password?: string;
+}
+
 export type ProfileField =
   | "firstName"
   | "lastName"

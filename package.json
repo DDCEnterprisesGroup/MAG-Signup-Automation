@@ -14,6 +14,8 @@
     "resume": "tsx src/index.ts",
     "init": "tsx src/cli/init.ts",
     "doctor": "tsx src/cli/doctor.ts",
+    "status": "tsx src/cli/status.ts",
+    "ingest": "tsx src/cli/ingest.ts",
     "backup": "tsx src/cli/backup.ts",
     "restore": "tsx src/cli/restore.ts",
     "version": "tsx src/cli/version.ts",

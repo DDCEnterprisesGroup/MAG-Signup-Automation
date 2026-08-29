@@ -7,6 +7,7 @@ npm run backup creates a timestamped ZIP containing:
 - the live workbook;
 - the local field registry;
 - reconciliation hashes and installation metadata when present;
+- the non-secret ingestion idempotency ledger when present;
 - application version, creation time, and source platform metadata.
 
 Browser profiles are excluded because cookies and authentication material may be present. Dependencies, caches, logs, screenshots, and temporary locks are excluded.

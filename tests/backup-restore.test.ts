@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -47,11 +47,14 @@ test("portable backup records version, excludes browser state, restores across d
       people: [["P0001", "Test", "Person", "", "test@example.invalid", "", "", "", "", "", "", "", "", "PENDING", "", ""]],
     });
     await copyFile(path.resolve("config/field-registry.json"), sourceConfig.fieldRegistryPath);
+    await mkdir(sourceConfig.runtimeDir, { recursive: true });
+    await writeFile(path.join(sourceConfig.runtimeDir, "ingestion-ledger.json"), '[{"requestId":"safe-id","personId":"P0001","digest":"hash"}]');
     const backupPath = await createOperationalBackup(sourceConfig, "1.1.0");
     const inspected = await inspectBackup(backupPath);
     assert.equal(inspected.metadata.applicationVersion, "1.1.0");
     assert.equal(inspected.metadata.browserStateIncluded, false);
-    assert.ok(!inspected.metadata.files.some((file) => /browser|runtime/i.test(file)));
+    assert.ok(!inspected.metadata.files.some((file) => /browser/i.test(file)));
+    assert.ok(inspected.metadata.files.includes("runtime/ingestion-ledger.json"));
 
     await restoreOperationalBackup(destinationConfig, backupPath, false);
     const restored = new WorkbookStore(destinationConfig.workbookPath);
@@ -63,6 +66,7 @@ test("portable backup records version, excludes browser state, restores across d
       await restored.release();
     }
     await assert.rejects(restoreOperationalBackup(destinationConfig, backupPath, false), /Explicit overwrite confirmation/);
+    assert.match(await readFile(path.join(destinationConfig.runtimeDir, "ingestion-ledger.json"), "utf8"), /safe-id/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

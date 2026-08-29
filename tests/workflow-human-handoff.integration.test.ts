@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium } from "playwright";
+import { launchCompatibleBrowser } from "../src/browser/browser-launch.js";
 import { loadConfig } from "../src/config.js";
 import { WorkbookStore } from "../src/excel/workbook-store.js";
 import { Logger } from "../src/logging/logger.js";
@@ -14,9 +14,9 @@ import { createFixtureWorkbook } from "./helpers/workbook-fixture.js";
 test("manual handoff submission completes and automatically advances to the next eligible site", async (context) => {
   let probe;
   try {
-    probe = await chromium.launch({ channel: "chrome", headless: true });
+    probe = (await launchCompatibleBrowser("chrome")).browser;
   } catch {
-    context.skip("Installed Chrome is unavailable in this environment");
+    context.skip("No compatible Chrome or Playwright Chromium browser is available");
     return;
   } finally {
     await probe?.close();
@@ -114,9 +114,9 @@ test("manual handoff submission completes and automatically advances to the next
 test("a previously completed person receives only a newly added Site ID", async (context) => {
   let probe;
   try {
-    probe = await chromium.launch({ channel: "chrome", headless: true });
+    probe = (await launchCompatibleBrowser("chrome")).browser;
   } catch {
-    context.skip("Installed Chrome is unavailable in this environment");
+    context.skip("No compatible Chrome or Playwright Chromium browser is available");
     return;
   } finally {
     await probe?.close();

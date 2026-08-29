@@ -133,6 +133,19 @@ npm run resume
 
 Both commands reconcile the workbook before selection. Completed Person ID + Site ID pairs are skipped. New sites become unattempted only for people who have not completed those Site IDs. Temporary failures remain eligible within the configured cap.
 
+## Automated intake and operations status
+
+An authorized bot or local integration can place one validated signup request in a private JSON file and ingest it without manually bridging data into the workbook:
+
+~~~bash
+npm run ingest -- --file /absolute/private/path/signup.json
+npm run status
+~~~
+
+The intake requires `requestId`, `firstName`, `lastName`, and `email`; other existing profile fields are optional. The request ID and normalized email make retries idempotent. Reusing a request ID with different data or an email belonging to another name fails closed. The private runtime ledger stores only a digest, request ID, person ID, result, and timestamp—not profile values—and is included in operational backups.
+
+`npm run status` prints a machine-readable operations dashboard covering queued/active/completed profiles, attempt states, human handoffs, retry backlog, stale work, reconciliation mismatches, site health, and the browser actually selected on this Mac. It is read-only and exits nonzero when the browser is unavailable or reconciliation needs attention.
+
 Press Ctrl+C once for a checkpoint-safe stop. During human handoff, type q to stop. A completed pair can be reset only with the exact explicit command documented in the workbook guide.
 
 ## Human handoff

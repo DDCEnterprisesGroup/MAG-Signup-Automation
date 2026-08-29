@@ -13,6 +13,7 @@ import type {
   PersonProgress,
   PersonSummary,
   ReconciliationReport,
+  SignupIntake,
   Site,
   SiteIssue,
 } from "../types/models.js";
@@ -656,6 +657,78 @@ export class WorkbookStore {
 
   getPeople(): readonly PersonProfile[] {
     return this.people;
+  }
+
+  async ingestPerson(input: SignupIntake): Promise<{ person: PersonProfile; created: boolean }> {
+    const email = input.email.trim().toLowerCase();
+    if (!input.requestId.trim() || !input.firstName.trim() || !input.lastName.trim() || !email) {
+      throw new Error("requestId, firstName, lastName, and email are required.");
+    }
+    const existing = this.people.find((person) => person.email.trim().toLowerCase() === email);
+    if (existing) {
+      if (
+        existing.firstName.trim().toLowerCase() !== input.firstName.trim().toLowerCase() ||
+        existing.lastName.trim().toLowerCase() !== input.lastName.trim().toLowerCase()
+      ) {
+        throw new Error(`Email already belongs to a different workbook profile (${existing.id}).`);
+      }
+      return { person: existing, created: false };
+    }
+
+    const sheet = this.sheetValues.get(SHEETS.people);
+    if (!sheet) throw new Error("People worksheet is not loaded.");
+    const headers = headerMap(sheet);
+    const rowNumber = Math.max(2, lastRow(sheet) + 1);
+    const id = nextDurableId("P", [
+      ...this.people.map((person) => person.id),
+      ...this.attempts.map((attempt) => attempt.personId),
+    ]);
+    const now = new Date().toISOString();
+    const values: Record<string, string> = {
+      ID: id,
+      "FIRST NAME/GIVEN NAME": input.firstName.trim(),
+      "LAST NAME": input.lastName.trim(),
+      PHONE: input.phone?.trim() ?? "",
+      EMAIL: email,
+      ADDRESS: input.address?.trim() ?? "",
+      CITY: input.city?.trim() ?? "",
+      STATE: input.state?.trim() ?? "",
+      ZIP: input.zip?.trim() ?? "",
+      DOB: input.dob?.trim() ?? "",
+      OCCUPATION: input.occupation?.trim() ?? "",
+      "ANNUAL INCOME": input.annualIncome?.trim() ?? "",
+      PASSWORD: input.password ?? "",
+      STATUS: "PENDING",
+      "CURRENT SITE ID": "",
+      "LAST UPDATED": now,
+    };
+    for (const [header, value] of Object.entries(values)) {
+      const column = headerColumn(headers, header);
+      if (column) this.setCell(SHEETS.people, `${columnLetter(column - 1)}${rowNumber}`, value);
+    }
+    const person: PersonProfile = {
+      rowNumber,
+      id,
+      firstName: values["FIRST NAME/GIVEN NAME"] ?? "",
+      lastName: values["LAST NAME"] ?? "",
+      phone: values.PHONE ?? "",
+      email,
+      address: values.ADDRESS ?? "",
+      city: values.CITY ?? "",
+      state: values.STATE ?? "",
+      zip: values.ZIP ?? "",
+      dob: values.DOB ?? "",
+      occupation: values.OCCUPATION ?? "",
+      annualIncome: values["ANNUAL INCOME"] ?? "",
+      password: values.PASSWORD ?? "",
+      dynamicFields: {},
+      status: "PENDING",
+      currentSiteId: "",
+      lastUpdated: now,
+    };
+    this.people.push(person);
+    await this.checkpoint();
+    return { person, created: true };
   }
 
   getAttempts(): readonly AttemptRecord[] {

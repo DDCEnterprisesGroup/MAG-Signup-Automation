@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chromium } from "playwright";
+import { launchCompatibleBrowser } from "../src/browser/browser-launch.js";
 import { scanAndFillPage } from "../src/forms/form-handler.js";
 import type { PersonProfile } from "../src/types/models.js";
 import { captureHandoffSnapshot, observeHandoffPage } from "../src/workflow/handoff-observer.js";
@@ -29,9 +29,9 @@ const person: PersonProfile = {
 test("human-handoff page observation regressions", async (context) => {
   let browser;
   try {
-    browser = await chromium.launch({ channel: "chrome", headless: true });
+    browser = (await launchCompatibleBrowser("chrome")).browser;
   } catch {
-    context.skip("Installed Chrome is unavailable in this environment");
+    context.skip("No compatible Chrome or Playwright Chromium browser is available");
     return;
   }
 

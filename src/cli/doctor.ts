@@ -1,6 +1,6 @@
 import { access, constants, open, readFile, statfs } from "node:fs/promises";
 import path from "node:path";
-import { chromium } from "playwright";
+import { launchCompatibleBrowser } from "../browser/browser-launch.js";
 import { loadConfig } from "../config.js";
 import { loadFieldRegistry } from "../fields/field-registry.js";
 import { WorkbookStore } from "../excel/workbook-store.js";
@@ -36,11 +36,9 @@ export async function runDoctor(projectRoot = process.cwd()): Promise<Check[]> {
   checks.push(await check("npm dependencies", async () => (await access(path.join(projectRoot, "node_modules")), "node_modules present")));
   checks.push(
     await check("Playwright browser", async () => {
-      const browser = await chromium
-        .launch({ headless: true, ...(config.browserChannel ? { channel: config.browserChannel } : {}) })
-        .catch(() => chromium.launch({ headless: true }));
-      await browser.close();
-      return config.browserChannel || chromium.executablePath();
+      const launched = await launchCompatibleBrowser(config.browserChannel);
+      await launched.browser.close();
+      return `${launched.source}${launched.fallbackUsed ? " (configured channel unavailable; fallback verified)" : ""}`;
     }),
   );
   checks.push(await check("Workbook exists", async () => (await access(config.workbookPath, constants.R_OK), config.workbookPath)));

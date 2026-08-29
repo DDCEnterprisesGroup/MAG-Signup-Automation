@@ -47,6 +47,7 @@ export async function createOperationalBackup(config: AppConfig, applicationVers
     await add(config.fieldRegistryPath, "config/field-registry.json", true);
     await add(config.reconciliationStatePath, "config/reconciliation-state.json", false);
     await add(path.join(config.dataDir, "config", "installation.json"), "config/installation.json", false);
+    await add(path.join(config.runtimeDir, "ingestion-ledger.json"), "runtime/ingestion-ledger.json", false);
     const metadata: BackupMetadata = {
       format: "MAG-AUTOMATION-BACKUP",
       backupVersion: 1,
@@ -131,6 +132,7 @@ export async function restoreOperationalBackup(config: AppConfig, backupPath: st
   for (const [archivePath, target] of [
     ["config/reconciliation-state.json", config.reconciliationStatePath],
     ["config/installation.json", path.join(config.dataDir, "config", "installation.json")],
+    ["runtime/ingestion-ledger.json", path.join(config.runtimeDir, "ingestion-ledger.json")],
   ] as const) {
     const file = zip.file(archivePath);
     if (!file) continue;
