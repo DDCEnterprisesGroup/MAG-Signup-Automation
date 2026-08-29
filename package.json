@@ -16,6 +16,7 @@
     "doctor": "tsx src/cli/doctor.ts",
     "status": "tsx src/cli/status.ts",
     "ingest": "tsx src/cli/ingest.ts",
+    "reconcile": "tsx src/cli/reconcile.ts",
     "backup": "tsx src/cli/backup.ts",
     "restore": "tsx src/cli/restore.ts",
     "version": "tsx src/cli/version.ts",

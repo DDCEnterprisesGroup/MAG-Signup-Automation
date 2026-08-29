@@ -49,3 +49,19 @@ If Chrome channel launch fails, run npm run setup:chromium and set BROWSER_CHANN
 ## Updates
 
 Create a backup, pull with fast-forward only, reinstall dependencies, rerun setup, and finish with doctor. The local workbook is not replaced by repository updates.
+
+# Operating MAG on macOS
+
+After setup and a successful manual dry run, the portable control script provides the standard operations:
+
+~~~bash
+scripts/magctl.sh start
+scripts/magctl.sh stop
+scripts/magctl.sh status
+scripts/magctl.sh logs
+scripts/magctl.sh test
+scripts/magctl.sh reconcile
+scripts/magctl.sh backup
+~~~
+
+Set `MAG_DATA_DIR` and `MAG_WORKBOOK_PATH` in the calling environment when the operational workbook is not in the standard Application Support directory. `scripts/com.ddc.mag.plist.example` is a launchd template; replace its two placeholders with absolute paths, validate it with `plutil`, and only then install it in `~/Library/LaunchAgents`. Do not enable it until supervised acceptance is complete because `run` processes all eligible records.

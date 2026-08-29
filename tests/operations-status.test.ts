@@ -28,6 +28,8 @@ test("operations status exposes queues, stale work, retries, handoffs, and recon
   assert.equal(status.staleInProgress, 1);
   assert.equal(status.humanHandoffs, 1);
   assert.equal(status.retryQueue, 1);
+  assert.equal(status.profiles.failed, 0);
+  assert.equal(status.reconciliation.unreconciled, 1);
   assert.deepEqual(status.reconciliationIssues, ["summary mismatch: P0001"]);
 });
 

@@ -135,16 +135,18 @@ Both commands reconcile the workbook before selection. Completed Person ID + Sit
 
 ## Automated intake and operations status
 
-An authorized bot or local integration can place one validated signup request in a private JSON file and ingest it without manually bridging data into the workbook:
+An authorized bot or local integration can place one or more validated signup requests in a private JSON or CSV file and ingest them without manually bridging data into the workbook:
 
 ~~~bash
 npm run ingest -- --file /absolute/private/path/signup.json
+npm run ingest -- --file /absolute/private/path/signups.csv
 npm run status
+npm run reconcile
 ~~~
 
-The intake requires `requestId`, `firstName`, `lastName`, and `email`; other existing profile fields are optional. The request ID and normalized email make retries idempotent. Reusing a request ID with different data or an email belonging to another name fails closed. The private runtime ledger stores only a digest, request ID, person ID, result, and timestamp—not profile values—and is included in operational backups.
+The intake requires `requestId`, `firstName`, `lastName`, and `email`; other existing profile fields and a source label are optional. JSON may be one object or an array. CSV uses headers and supports common snake-case aliases. Malformed rows are reported by index without echoing private values; valid rows in the same batch continue. The request ID and normalized email make retries idempotent. Reusing a request ID with different data or an email belonging to another name fails closed. The private runtime ledger stores only a digest, request ID, person ID, result, source label, and timestamp—not profile values—and is included in operational backups.
 
-`npm run status` prints a machine-readable operations dashboard covering queued/active/completed profiles, attempt states, human handoffs, retry backlog, stale work, reconciliation mismatches, site health, and the browser actually selected on this Mac. It is read-only and exits nonzero when the browser is unavailable or reconciliation needs attention.
+`npm run status` prints a machine-readable operations dashboard covering queued/active/completed profiles, attempt states, human handoffs, retry backlog, stale work, reconciliation mismatches, site health, and the browser actually selected on this Mac. It is read-only and exits nonzero when the browser is unavailable or reconciliation needs attention. Host monitoring can atomically cache the same secret-free payload with `npm run status -- --output /path/to/mag-status.json`.
 
 Press Ctrl+C once for a checkpoint-safe stop. During human handoff, type q to stop. A completed pair can be reset only with the exact explicit command documented in the workbook guide.
 

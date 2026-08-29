@@ -1,13 +1,14 @@
 import type { AttemptRecord, PersonProfile, PersonSummary, Site, SiteIssue } from "../types/models.js";
 
 export interface OperationsStatus {
-  profiles: { total: number; queued: number; active: number; completed: number };
+  profiles: { total: number; queued: number; active: number; completed: number; failed: number; skipped: number };
   attempts: Record<string, number>;
   humanHandoffs: number;
   retryQueue: number;
   staleInProgress: number;
   reconciliationIssues: string[];
   sites: { total: number; active: number; quarantined: number; withIssues: number };
+  reconciliation: { reconciled: number; unreconciled: number };
 }
 
 export function buildOperationsStatus(
@@ -48,6 +49,8 @@ export function buildOperationsStatus(
       queued: people.filter((person) => ["", "PENDING"].includes(person.status.trim().toUpperCase())).length,
       active: people.filter((person) => ["IN PROGRESS", "WAITING FOR HUMAN"].includes(person.status.trim().toUpperCase())).length,
       completed: people.filter((person) => person.status.trim().toUpperCase() === "COMPLETED").length,
+      failed: people.filter((person) => person.status.trim().toUpperCase() === "FAILED").length,
+      skipped: people.filter((person) => person.status.trim().toUpperCase() === "SKIPPED").length,
     },
     attempts: counts,
     humanHandoffs: latestAttempts.filter((attempt) => attempt.status === "WAITING FOR HUMAN").length,
@@ -59,6 +62,10 @@ export function buildOperationsStatus(
       active: sites.filter((site) => site.active).length,
       quarantined: sites.filter((site) => ["INVALID", "BLOCKED", "TEMP ERROR"].includes(site.status.trim().toUpperCase())).length,
       withIssues: new Set(issues.map((issue) => issue.siteId)).size,
+    },
+    reconciliation: {
+      reconciled: latestAttempts.filter((attempt) => attempt.status === "COMPLETED").length,
+      unreconciled: reconciliationIssues.length,
     },
   };
 }
