@@ -1,6 +1,8 @@
 import { runPreflight } from "../operations/preflight.js";
 
-const result = await runPreflight(undefined, (line) => console.log(line)).catch((error: unknown) => {
+const startingWorker = process.argv.includes("--starting");
+
+const result = await runPreflight(undefined, (line) => console.log(line), { startingWorker }).catch((error: unknown) => {
   console.log("");
   console.log("Reconciling... FAIL");
   console.log("Worker NOT started.");

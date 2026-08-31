@@ -17,7 +17,7 @@ show_status() {
 }
 start_mag() {
   if is_running; then echo "MAG is already running; no duplicate worker was started."; show_status; return 0; fi
-  if ! ( cd "$PROJECT_ROOT" && npm run --silent preflight ); then
+  if ! ( cd "$PROJECT_ROOT" && npm run --silent preflight -- --starting ); then
     return 1
   fi
   refresh_status || true

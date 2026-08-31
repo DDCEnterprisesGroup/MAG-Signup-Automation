@@ -11,6 +11,7 @@ import {
   type FieldDescriptor,
   type FieldMatch,
 } from "./field-mapper.js";
+import { IDENTITY_FIELDS, prefilledValueConflicts } from "./prefill-check.js";
 
 export type NavigationAction =
   | { kind: "next"; locator: Locator; label: string; confidence: number }
@@ -26,6 +27,8 @@ export interface PageScanResult {
   humanHandoff?: HumanHandoffReason;
   action?: NavigationAction;
   stateHash: string;
+  /** Identity fields (email / firstName / lastName) this scan filled or confirmed as matching the client. */
+  identityFieldsSeen?: string[];
 }
 
 const otpPattern = /\b(one time code|one time password|verification code|otp|authentication code|confirm code)\b/;
@@ -273,6 +276,7 @@ export async function scanAndFillPage(
 
   const fieldLocator = page.locator("input, textarea, select");
   const filledFields: string[] = [];
+  const identityFieldsSeen: string[] = [];
   let recognizedFieldCount = 0;
   const unmappedRequired: FieldDescriptor[] = [];
 
@@ -303,14 +307,37 @@ export async function scanAndFillPage(
       continue;
     }
     if (descriptor.currentValue.trim()) {
+      // A form is not safe just because a field has a value. If a pre-populated
+      // field clearly belongs to someone else, stop and hand off rather than
+      // submit stale data.
+      if (prefilledValueConflicts(match.field, descriptor.currentValue, value)) {
+        return {
+          success: false,
+          filledFields,
+          recognizedFieldCount,
+          visibleFieldCount: fields.length,
+          accountFlow,
+          humanHandoff: {
+            category: "REQUIRED_MANUAL_FIELD",
+            reason: `A prefilled ${match.field} field does not match the active client; left for operator review`,
+          },
+          stateHash: await currentPageState(page),
+          identityFieldsSeen,
+        };
+      }
+      if (IDENTITY_FIELDS.has(match.field)) identityFieldsSeen.push(match.field);
       if (descriptor.invalid) unmappedRequired.push(descriptor);
       continue;
     }
     const locator = fieldLocator.nth(descriptor.domIndex);
     try {
       const filled = descriptor.tag === "select" ? await fillSelect(locator, value, match) : (await locator.fill(value), true);
-      if (filled) filledFields.push(match.field);
-      else if (descriptor.required) unmappedRequired.push(descriptor);
+      if (filled) {
+        filledFields.push(match.field);
+        if (IDENTITY_FIELDS.has(match.field)) identityFieldsSeen.push(match.field);
+      } else if (descriptor.required) {
+        unmappedRequired.push(descriptor);
+      }
     } catch {
       if (descriptor.required || descriptor.invalid) unmappedRequired.push(descriptor);
     }
@@ -330,7 +357,15 @@ export async function scanAndFillPage(
 
   const hasVisibleProfileForm = recognizedFieldCount > 0;
   if (await pageLooksComplete(page, hasVisibleProfileForm)) {
-    return { success: true, filledFields, recognizedFieldCount, visibleFieldCount: fields.length, accountFlow, stateHash: await currentPageState(page) };
+    return {
+      success: true,
+      filledFields,
+      recognizedFieldCount,
+      visibleFieldCount: fields.length,
+      accountFlow,
+      stateHash: await currentPageState(page),
+      identityFieldsSeen,
+    };
   }
   const action = await findNavigationAction(page, recognizedFieldCount, accountFlow);
   return {
@@ -341,6 +376,7 @@ export async function scanAndFillPage(
     accountFlow,
     ...(action ? { action } : {}),
     stateHash: await currentPageState(page),
+    identityFieldsSeen,
   };
 }
 

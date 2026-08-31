@@ -133,6 +133,23 @@ npm run resume
 
 Both commands reconcile the workbook before selection. Completed Person ID + Site ID pairs are skipped. New sites become unattempted only for people who have not completed those Site IDs. Temporary failures remain eligible within the configured cap.
 
+`mag start` (and `mag restart`) additionally run a startup preflight gate before the worker launches: it checks the worker/workbook lock, verifies the workbook opens and its schema is valid, writes a lightweight pre-reconcile checkpoint copy (`backups/MAG_Workbook-pre-start-*.xlsx`, last 10 kept), runs the same reconciliation, and prints a PASS/FAIL summary. Deterministic gaps and stale summaries are repaired automatically; a stale in-progress attempt from a prior crash is routed to WAITING FOR HUMAN rather than retried (it could double-submit). The worker does not start on a critical conflict — a duplicate ATTEMPT ID, a summary claiming more completions than the ledger supports, or a completed/in-progress Results row pointing at a missing Person or Site ID — and the exact issue plus the required operator action are printed. Run the gate without starting the worker with `mag preflight`.
+
+## Live operator hotkeys
+
+When the worker runs in a terminal, single keys control the current site without typing commands. They never act mid-step: each key raises a request that the engine applies at its next safe checkpoint, so the workbook is never left half-written and no submission is duplicated.
+
+- `SPACE` — defer the current site. It is recorded OPERATOR_DEFERRED (not completed, not permanently skipped) and stays eligible on a later run; the worker moves to the next site.
+- `R` — retry the current site from the top (bounded).
+- `S` — permanently skip this exact person/site. Requires a `Y` confirmation. `SPACE` never does this.
+- `H` — hand the current site to the human-handoff workflow.
+- `P` — pause; press again to resume.
+- `Q` — stop the worker after the current checkpoint (confirmed with `Y`). `Ctrl+C` still works for a checkpoint-safe stop.
+
+A status line shows the current person, site, phase, attempt, elapsed time, and running counts. The terminal is always restored on exit, on error, and on signals. With no terminal (service/launchd) the hotkeys are simply unavailable and behaviour is unchanged.
+
+Slow or briefly unreachable sites are not treated as broken: repeated load timeouts, DNS errors, connection errors, and HTTP 5xx are deferred to the retry queue and stay retryable across runs, only becoming a permanent failure once a wider ceiling (`retryCount` + `maxAutoDeferrals`) is exhausted.
+
 ## Automated intake and operations status
 
 An authorized bot or local integration can place one or more validated signup requests in a private JSON or CSV file and ingest them without manually bridging data into the workbook:
@@ -167,6 +184,8 @@ While status is WAITING FOR HUMAN, MAG observes navigation, form and field signa
 MAG may click Submit, Register, Create Account, Complete Registration, Finish, Sign Up, Join, or Create Profile only when the page is confidently a registration flow and every safety gate passes. Next and Continue are treated as progression controls.
 
 Optional marketing email, SMS, newsletter, partner promotion, promotional contact, and data-sharing boxes remain unchecked. Required or ambiguous legal consent is an operator decision.
+
+A form is not considered safe just because its fields already hold values. Before a final submit, MAG checks any pre-populated recognized field against the active person: a clear mismatch on email, name, phone, ZIP, or state stops automatic submission and hands off for review. A final control is also never clicked unless the flow has filled or confirmed a matching email, or a matching first and last name.
 
 Use a supervised dry run when evaluating a new site set:
 

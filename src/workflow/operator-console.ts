@@ -43,6 +43,8 @@ export interface OperatorControl {
   suspendInput(): void;
   resumeInput(): void;
   setStatus(patch: LiveStatus): void;
+  /** A progress line from the engine. Printed above the live status line on a TTY; plain console.log otherwise. */
+  progress(message: string): void;
   note(message: string): void;
   countCompleted(): void;
   countFailed(): void;
@@ -62,6 +64,9 @@ export class NullOperatorControl implements OperatorControl {
   suspendInput(): void {}
   resumeInput(): void {}
   setStatus(): void {}
+  progress(message: string): void {
+    console.log(message);
+  }
   note(): void {}
   countCompleted(): void {}
   countFailed(): void {}
@@ -159,6 +164,16 @@ export class OperatorConsole implements OperatorControl {
 
   setStatus(patch: LiveStatus): void {
     this.status = { ...this.status, ...patch };
+    this.render();
+  }
+
+  progress(message: string): void {
+    if (!this.output.isTTY) {
+      console.log(message);
+      return;
+    }
+    this.clearLine();
+    this.output.write(`${message}\n`);
     this.render();
   }
 

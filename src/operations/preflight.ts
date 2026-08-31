@@ -56,7 +56,16 @@ async function detectLockState(lockPath: string): Promise<"free" | "stale" | "he
   return "stale";
 }
 
-export async function runPreflight(providedConfig?: AppConfig, sink: Sink = () => undefined): Promise<PreflightResult> {
+export interface PreflightOptions {
+  /** True when the worker will start next (mag start / restart); false for a standalone `mag preflight`. */
+  startingWorker?: boolean;
+}
+
+export async function runPreflight(
+  providedConfig?: AppConfig,
+  sink: Sink = () => undefined,
+  options: PreflightOptions = {},
+): Promise<PreflightResult> {
   const config = providedConfig ?? (await loadConfig());
   const lines: string[] = [];
   const emit: Sink = (line) => {
@@ -140,7 +149,7 @@ export async function runPreflight(providedConfig?: AppConfig, sink: Sink = () =
       for (const item of safeRepairs) emit(`  - ${item}`);
     }
     emit("");
-    emit("Starting worker...");
+    emit(options.startingWorker ? "Starting worker..." : "Startup checks passed. Run `mag start` to launch the worker.");
     return { blocked: false, critical: [], actions: [], safeRepairs, deterministicUpdates, lockState, lines };
   };
 

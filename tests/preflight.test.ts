@@ -44,6 +44,10 @@ test("clean workbook passes with no changes and does not block startup", async (
     assert.equal(result.blocked, false);
     assert.ok(result.lines.some((line) => line.includes("Reconciling... PASS")));
     assert.ok(result.lines.some((line) => line.includes("No reconciliation changes required.")));
+    assert.ok(result.lines.some((line) => line.includes("Startup checks passed")), "standalone label by default");
+
+    const gated = await runPreflight(config, () => undefined, { startingWorker: true });
+    assert.ok(gated.lines.some((line) => line.includes("Starting worker...")));
   } finally {
     await cleanup();
   }

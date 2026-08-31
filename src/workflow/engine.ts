@@ -5,6 +5,7 @@ import { BrowserSession, classifyNavigationError } from "../browser/browser-sess
 import type { WorkbookStore } from "../excel/workbook-store.js";
 import { scanAndFillPage } from "../forms/form-handler.js";
 import { getDefaultFieldRegistry } from "../forms/field-mapper.js";
+import { hasIdentityAnchor } from "../forms/prefill-check.js";
 import type { Logger } from "../logging/logger.js";
 import type {
   AttemptRecord,
@@ -224,7 +225,7 @@ export class WorkflowEngine {
           attempt: "",
           siteStartedAt: Date.now(),
         });
-        console.log(`${progress} | Starting`);
+        this.control.progress(`${progress} | Starting`);
         await this.workbook.updatePerson(person, "IN PROGRESS", site.id);
         const prior = this.workbook.getLatestAttempt(person.id, site.id);
         const attempt = await this.workbook.beginOrResumeAttempt(person, site, prior);
@@ -250,7 +251,7 @@ export class WorkflowEngine {
       const waiting = latest.some((attempt) => attempt?.status === "WAITING FOR HUMAN");
       const finalStatus = waiting ? "WAITING FOR HUMAN" : pendingRetry ? "PENDING" : "COMPLETED";
       await this.workbook.updatePerson(person, finalStatus);
-      console.log(`${person.id} | Current site set finished | ${finalStatus}`);
+      this.control.progress(`${person.id} | Current site set finished | ${finalStatus}`);
     } finally {
       await browser.close();
     }
@@ -319,7 +320,7 @@ export class WorkflowEngine {
       errorCategory: "OPERATOR_DEFERRED",
       message: reason,
     });
-    console.log(`${person.id} | ${site.id} | OPERATOR_DEFERRED | ${reason}`);
+    this.control.progress(`${person.id} | ${site.id} | OPERATOR_DEFERRED | ${reason}`);
     return "deferred";
   }
 
@@ -338,7 +339,7 @@ export class WorkflowEngine {
       outcome: "FAILED",
       message: reason,
     });
-    console.log(`${attempt.personId} | ${site.id} | PERMANENT SKIP | ${reason}`);
+    this.control.progress(`${attempt.personId} | ${site.id} | PERMANENT SKIP | ${reason}`);
     return "failed";
   }
 
@@ -360,7 +361,7 @@ export class WorkflowEngine {
         return await this.markInvalid(site, attempt, "SITE_ERROR", targetUrl, "Malformed signup URL");
       }
 
-      console.log(`${progress} | Navigating`);
+      this.control.progress(`${progress} | Navigating`);
       this.control.setStatus({ phase: "loading" });
       await this.logger.event({ personId: person.id, siteId: site.id, url: normalizedTarget, action: "navigate", outcome: "started" });
       const navigation = await browser.navigate(normalizedTarget);
@@ -403,6 +404,7 @@ export class WorkflowEngine {
 
       safeToScreenshot = true;
       const repeatedStates = new Map<string, number>();
+      const identityFieldsSeen = new Set<string>();
       let automaticSteps = 0;
       let ledgerStep = Math.max(0, attempt.formStep);
       let sawRecognizedForm = false;
@@ -433,12 +435,13 @@ export class WorkflowEngine {
           notes: `Scanning page ${ledgerStep}`,
         });
         this.control.setStatus({ phase: `scanning page ${ledgerStep}`, attempt: `${automaticSteps + 1}` });
-        console.log(`${progress} | Scanning Page ${ledgerStep}`);
+        this.control.progress(`${progress} | Scanning Page ${ledgerStep}`);
         const scan = await scanAndFillPage(browser.page, person, this.fieldRegistry);
         if (scan.recognizedFieldCount > 0) {
           sawRecognizedForm = true;
           safeToScreenshot = false;
         }
+        for (const identityField of scan.identityFieldsSeen ?? []) identityFieldsSeen.add(identityField);
         if (scan.filledFields.length > 0) {
           await this.logger.event({
             personId: person.id,
@@ -467,6 +470,12 @@ export class WorkflowEngine {
         }
         if (!handoff && scan.action?.kind === "final" && this.config.dryRun) {
           handoff = { category: "HUMAN_CONSENT", reason: `Dry run paused before final action: ${scan.action.label}` };
+        }
+        if (!handoff && scan.action?.kind === "final" && !hasIdentityAnchor(identityFieldsSeen)) {
+          handoff = {
+            category: "HUMAN_CONSENT",
+            reason: `Final submission "${scan.action.label}" reached without a verified email or full-name field`,
+          };
         }
         if (!handoff && !scan.action) {
           if (scan.visibleFieldCount === 0 && scan.recognizedFieldCount === 0) {
@@ -602,7 +611,7 @@ export class WorkflowEngine {
       outcome: "COMPLETED",
       message: reason,
     });
-    console.log(`${progress} | COMPLETED`);
+    this.control.progress(`${progress} | COMPLETED`);
     return "completed";
   }
 
@@ -632,7 +641,7 @@ export class WorkflowEngine {
       errorCategory: category,
       message: note,
     });
-    console.log(`${site.id} | SITE INVALID | ${category}`);
+    this.control.progress(`${site.id} | SITE INVALID | ${category}`);
     return "invalid";
   }
 
@@ -677,7 +686,7 @@ export class WorkflowEngine {
       errorCategory: category,
       message: note,
     });
-    console.log(`${site.id} | ${status} | ${category}`);
+    this.control.progress(`${site.id} | ${status} | ${category}`);
     return "failed";
   }
 
@@ -709,7 +718,7 @@ export class WorkflowEngine {
       errorCategory: category,
       message: `${note} — will retry on a later run (${deferCount})`,
     });
-    console.log(`${site.id} | OPERATOR_DEFERRED | ${category} | retry later (${deferCount})`);
+    this.control.progress(`${site.id} | OPERATOR_DEFERRED | ${category} | retry later (${deferCount})`);
     return "deferred";
   }
 }

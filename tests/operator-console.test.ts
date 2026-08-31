@@ -30,7 +30,19 @@ test("NullOperatorControl is inert and never blocks", async () => {
   const control = new NullOperatorControl();
   assert.equal(await control.checkpoint(), null);
   assert.equal(control.stopRequested, false);
+  control.progress("still just a plain log");
   control.close();
+});
+
+test("progress lines are written above the status line on a TTY", async () => {
+  const { console, text } = make();
+  console.start();
+  try {
+    console.progress("P0007 | Site 3 / 40 | Acme | Scanning Page 2");
+    assert.match(text(), /P0007 \| Site 3 \/ 40 \| Acme \| Scanning Page 2/);
+  } finally {
+    console.close();
+  }
 });
 
 test("SPACE requests a defer and R requests a retry, each consumed once", async () => {

@@ -44,6 +44,7 @@ class ScriptedControl implements OperatorControl {
   setStatus(patch: LiveStatus): void {
     this.current = { ...this.current, ...patch };
   }
+  progress(): void {}
   note(): void {}
   countCompleted(): void {}
   countFailed(): void {}
