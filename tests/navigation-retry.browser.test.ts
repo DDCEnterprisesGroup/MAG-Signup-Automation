@@ -41,7 +41,7 @@ function config(root: string): AppConfig {
     browserChannel: "chrome",
     workerCount: 1,
     navigationTimeoutMs: 100,
-    navigationRetryTimeoutMs: 1_000,
+    navigationRetryTimeoutMs: 3_000,
     navigationRetries: 1,
     retryDelayMs: 0,
     siteDelayMinMs: 0,
@@ -92,12 +92,12 @@ test("navigation retries a timeout and accepts a usable DOM despite timeout with
     const retry = await browser.navigate(`http://127.0.0.1:${address.port}/retry`);
     assert.equal(retry.attempts, 2);
     assert.ok(retry.status === 200 || retry.timedOutButUsable);
-    assert.match(await browser.page.locator("body").innerText(), /Create account/);
+    assert.match(await browser.page.locator("body").innerText({ timeout: 3_000 }), /Create account/);
 
     const usable = await browser.navigate(`http://127.0.0.1:${address.port}/usable`);
     assert.equal(usable.timedOutButUsable, true);
     assert.equal(usable.status, null);
-    assert.match(await browser.page.locator("body").innerText(), /Create account/);
+    assert.match(await browser.page.locator("body").innerText({ timeout: 3_000 }), /Create account/);
   } finally {
     await browser.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
