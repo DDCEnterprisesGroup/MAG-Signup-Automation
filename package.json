@@ -17,6 +17,7 @@
     "status": "tsx src/cli/status.ts",
     "ingest": "tsx src/cli/ingest.ts",
     "reconcile": "tsx src/cli/reconcile.ts",
+    "preflight": "tsx src/cli/preflight.ts",
     "inventory": "tsx src/cli/site-audit.ts",
     "handoffs": "tsx src/cli/handoffs.ts",
     "backup": "tsx src/cli/backup.ts",

@@ -17,6 +17,9 @@ show_status() {
 }
 start_mag() {
   if is_running; then echo "MAG is already running; no duplicate worker was started."; show_status; return 0; fi
+  if ! ( cd "$PROJECT_ROOT" && npm run --silent preflight ); then
+    return 1
+  fi
   refresh_status || true
   echo "MAG started successfully. Select exactly the intended person; Q exits without processing."
   show_status
@@ -57,6 +60,7 @@ help_text() {
     "  mag restart      Stop, verify, then start" "  mag status       Show concise operational status" \
     "  mag logs [--follow]  Show recent logs" "  mag test         Run the accepted suite" \
     "  mag backup       Create a portable backup" "  mag reconcile    Audit and reconcile the workbook" \
+    "  mag preflight    Run the startup integrity gate without starting the worker" \
     "  mag run --person P0001 --site S0001  Run exactly one person/site" \
     "  mag handoffs     List current human handoffs" \
     "  mag handoff resume|skip P0001 S0001  Control exactly one handoff" \
@@ -80,6 +84,7 @@ case "$command" in
   test) cd "$PROJECT_ROOT"; exec npm run check ;;
   backup) cd "$PROJECT_ROOT"; exec npm run backup ;;
   reconcile) cd "$PROJECT_ROOT"; npm run inventory; exec npm run reconcile ;;
+  preflight) cd "$PROJECT_ROOT"; exec npm run --silent preflight ;;
   dashboard) shift; cd "$PROJECT_ROOT"; exec npm run status -- "$@" ;;
   handoffs) shift; cd "$PROJECT_ROOT"; exec npm run handoffs -- "$@" ;;
   handoff)
