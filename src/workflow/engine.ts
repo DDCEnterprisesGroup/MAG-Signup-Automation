@@ -3,7 +3,7 @@ import type { AppConfig } from "../config.js";
 import type { FieldRegistry } from "../fields/field-registry.js";
 import { BrowserSession, classifyNavigationError } from "../browser/browser-session.js";
 import type { WorkbookStore } from "../excel/workbook-store.js";
-import { scanAndFillPage } from "../forms/form-handler.js";
+import { currentPageState, scanAndFillPage } from "../forms/form-handler.js";
 import { getDefaultFieldRegistry } from "../forms/field-mapper.js";
 import { hasIdentityAnchor } from "../forms/prefill-check.js";
 import type { Logger } from "../logging/logger.js";
@@ -20,9 +20,10 @@ import { SiteControlSignal, StopRunError } from "../types/models.js";
 import { normalizeUrl, safeUrl, sameSiteHost } from "../utils/text.js";
 import { eligibilityConfig, isSiteProcessable } from "./eligibility.js";
 import { waitForOperator, type OperatorHandoffDecision } from "./human-handoff.js";
+import { captureHandoffSnapshot, classifyHandoffChange } from "./handoff-observer.js";
 import { NullOperatorControl, type OperatorControl } from "./operator-console.js";
 
-type SiteOutcome = "completed" | "failed" | "invalid" | "deferred";
+type SiteOutcome = "completed" | "failed" | "invalid" | "deferred" | "waiting";
 
 const terminalSiteStatuses = new Set(["DUPLICATE", "INVALID", "INACTIVE", "SITE CLOSED", "CLOSED"]);
 
@@ -239,6 +240,8 @@ export class WorkflowEngine {
         } else if (outcome === "deferred") {
           this.stats.deferred += 1;
           this.control.countDeferred();
+        } else if (outcome === "waiting") {
+          this.stats.waitingForHuman += 1;
         } else {
           this.stats.skipped += 1;
         }
@@ -324,6 +327,48 @@ export class WorkflowEngine {
     return "deferred";
   }
 
+  /**
+   * A final submit was already clicked this attempt and the operator (or a
+   * post-submit load failure) is now bailing out. Do NOT defer/retry from the
+   * top — that would re-navigate the entry URL and re-submit the same form.
+   * Record WAITING FOR HUMAN pinned to the post-submit page so the next run
+   * resumes there, re-checks the result, and never resubmits.
+   */
+  private async markSubmittedUnconfirmed(
+    person: PersonProfile,
+    site: Site,
+    attempt: AttemptRecord,
+    page: Page,
+    reason: string,
+  ): Promise<SiteOutcome> {
+    const url = safeUrl(page.url());
+    await this.workbook.updateAttempt(attempt, {
+      status: "WAITING FOR HUMAN",
+      formStep: Math.max(1, attempt.formStep),
+      lastUrl: url,
+      errorType: "HUMAN_CONSENT",
+      retryEligible: "YES",
+      notes:
+        `${reason} after a final submit was already clicked. The signup may already be complete; ` +
+        `the next run resumes at ${url} to re-check the result and does not resubmit. ` +
+        "Use `mag handoff skip` if the signup went through.",
+    });
+    await this.workbook.updatePerson(person, "WAITING FOR HUMAN", site.id);
+    await this.logger.event({
+      personId: person.id,
+      siteId: site.id,
+      url,
+      pageStep: attempt.formStep,
+      action: "submitted_unconfirmed",
+      outcome: "WAITING FOR HUMAN",
+      errorCategory: "HUMAN_CONSENT",
+      message: reason,
+    });
+    this.control.countHandoff();
+    this.control.progress(`${person.id} | ${site.id} | WAITING FOR HUMAN | submit already sent — next run re-checks, will not resubmit`);
+    return "waiting";
+  }
+
   private async markPermanentSkip(site: Site, attempt: AttemptRecord, reason: string): Promise<SiteOutcome> {
     await this.workbook.updateAttempt(attempt, {
       status: "FAILED",
@@ -351,6 +396,11 @@ export class WorkflowEngine {
     progress: string,
   ): Promise<SiteOutcome> {
     let safeToScreenshot = false;
+    // True once a final "submit" control has been clicked this attempt (and it
+    // stays true across a resume). From that point a defer/retry/skip or a load
+    // failure must NOT restart the flow from the top — that resubmits — so it
+    // resumes at the post-submit page instead.
+    let submittedThisAttempt = /submit was already clicked|awaiting confirmation/i.test(attempt.notes);
     const targetUrl = attempt.formStep > 0 && attempt.lastUrl ? attempt.lastUrl : site.finalUrl || site.signupUrl;
     let finalUrl = targetUrl;
     try {
@@ -393,7 +443,7 @@ export class WorkflowEngine {
         if (navigation.redirectCount > 10) return await this.markInvalid(site, attempt, "REDIRECT_LOOP", finalUrl, "Redirect limit exceeded");
         const legitimate = sameSiteHost(normalizedTarget, finalUrl) || (await hasSignupSignals(browser.page));
         if (!legitimate) {
-          return await this.markInvalid(site, attempt, "SIGNUP_NOT_FOUND", finalUrl, "Redirect did not reach a recognizable signup page");
+          return await this.markDeferred(person, site, attempt, "Cross-site redirect did not yet reach a recognizable signup page");
         }
         await this.workbook.recordSiteIssue(issueFor(site, "REDIRECT", "REDIRECTED", finalUrl, "Legitimate signup redirect followed"));
         await this.workbook.updateSite(site, "REDIRECTED", finalUrl, "Final signup URL updated after redirect");
@@ -408,9 +458,13 @@ export class WorkflowEngine {
       let automaticSteps = 0;
       let ledgerStep = Math.max(0, attempt.formStep);
       let sawRecognizedForm = false;
+      let assistTransitions = 0;
       while (true) {
         const request = await this.checkpointOrStop();
-        if (request === "defer" || request === "retry" || request === "skip") throw new SiteControlSignal(request);
+        if (request === "defer" || request === "retry" || request === "skip") {
+          if (submittedThisAttempt) return await this.markSubmittedUnconfirmed(person, site, attempt, browser.page, `Operator ${request}`);
+          throw new SiteControlSignal(request);
+        }
         if (request === "handoff") {
           const decision = await this.handoff(
             person,
@@ -436,7 +490,17 @@ export class WorkflowEngine {
         });
         this.control.setStatus({ phase: `scanning page ${ledgerStep}`, attempt: `${automaticSteps + 1}` });
         this.control.progress(`${progress} | Scanning Page ${ledgerStep}`);
+        const scanUrl = browser.page.url();
         const scan = await scanAndFillPage(browser.page, person, this.fieldRegistry);
+        await this.logger.event({
+          personId: person.id,
+          siteId: site.id,
+          url: browser.page.url(),
+          pageStep: ledgerStep,
+          action: "page_classified",
+          outcome: scan.phase,
+          message: `form=${scan.recognizedFieldCount > 0 ? "yes" : "no"}; action=${scan.action?.kind ?? "none"}`,
+        });
         if (scan.recognizedFieldCount > 0) {
           sawRecognizedForm = true;
           safeToScreenshot = false;
@@ -454,6 +518,28 @@ export class WorkflowEngine {
         }
         if (scan.success) {
           return await this.markCompleted(site, attempt, browser.page.url(), ledgerStep, progress, "Completion confirmation detected");
+        }
+
+        // A browser click can race the asynchronous scan. Never apply a
+        // decision produced from a URL/DOM that the operator has already left.
+        const currentState = await currentPageState(browser.page);
+        if (browser.page.url() !== scanUrl || currentState !== scan.stateHash) {
+          repeatedStates.clear();
+          automaticSteps = 0;
+          assistTransitions += 1;
+          await this.logger.event({
+            personId: person.id,
+            siteId: site.id,
+            url: browser.page.url(),
+            pageStep: ledgerStep,
+            action: "stale_scan_reset",
+            outcome: "rescan",
+            message: `Page changed during scan; previous URL=${safeUrl(scanUrl)}`,
+          });
+          this.control.progress(`${progress} | Page transition detected; resetting no-form state and rescanning`);
+          await browser.page.waitForLoadState("domcontentloaded", { timeout: 2_000 }).catch(() => undefined);
+          await browser.page.waitForTimeout(350);
+          continue;
         }
 
         const repeated = (repeatedStates.get(scan.stateHash) ?? 0) + 1;
@@ -477,11 +563,16 @@ export class WorkflowEngine {
             reason: `Final submission "${scan.action.label}" reached without a verified email or full-name field`,
           };
         }
-        if (!handoff && !scan.action) {
+        if (!handoff && scan.action?.kind === "final" && submittedThisAttempt) {
+          // Resumed onto another submit control after a submit was already sent
+          // this attempt: never click it automatically — a human confirms.
+          handoff = {
+            category: "HUMAN_CONSENT",
+            reason: `A submit was already sent for this site; the second submit control "${scan.action.label}" needs human confirmation`,
+          };
+        }
+        if (!handoff && !scan.action && scan.phase !== "LANDING_OR_INTERMEDIATE") {
           if (scan.visibleFieldCount === 0 && scan.recognizedFieldCount === 0) {
-            if (!sawRecognizedForm) {
-              return await this.markInvalid(site, attempt, "SIGNUP_NOT_FOUND", browser.page.url(), "No signup form or safe navigation control found");
-            }
             handoff = {
               category: "FORM_NOT_RECOGNIZED",
               reason: "The form changed pages, but no clear completion confirmation or safe next action was found",
@@ -489,6 +580,65 @@ export class WorkflowEngine {
           } else {
             handoff = { category: "FORM_NOT_RECOGNIZED", reason: "No safe navigation action could be determined" };
           }
+        }
+
+
+        if (!handoff && scan.phase === "LANDING_OR_INTERMEDIATE" && !scan.action) {
+          if (submittedThisAttempt) {
+            // We already sent a submit; a landing/blank page here is an
+            // unconfirmed result, not a fresh site to defer and restart.
+            return await this.markSubmittedUnconfirmed(person, site, attempt, browser.page, "Post-submit page is not a recognizable confirmation");
+          }
+          if (assistTransitions >= 6) {
+            return await this.markDeferred(person, site, attempt, "Operator-assist transition limit reached without a confirmed registration form");
+          }
+          const baseline = await captureHandoffSnapshot(browser.page);
+          this.control.setStatus({ phase: "operator assist" });
+          const assistTimeoutMs = this.config.operatorAssistTimeoutMs ?? 20_000;
+          const assistSeconds = Math.ceil(assistTimeoutMs / 1_000);
+          this.control.progress(`${progress} | No registration form detected yet; waiting up to ${assistSeconds}s for signup navigation or operator action`);
+          await this.logger.event({ personId: person.id, siteId: site.id, url: browser.page.url(), pageStep: ledgerStep, action: "operator_assist_entered", outcome: "waiting" });
+          const idleDeadline = Date.now() + assistTimeoutMs;
+          let transitioned = false;
+          while (Date.now() < idleDeadline) {
+            const assistRequest = await this.checkpointOrStop();
+            if (assistRequest === "defer" || assistRequest === "retry" || assistRequest === "skip") {
+              if (submittedThisAttempt) return await this.markSubmittedUnconfirmed(person, site, attempt, browser.page, `Operator ${assistRequest}`);
+              throw new SiteControlSignal(assistRequest);
+            }
+            if (assistRequest === "handoff") {
+              handoff = { category: "HUMAN_CONSENT", reason: "Operator requested a human handoff during operator assist" };
+              break;
+            }
+            await delay(250);
+            let current;
+            try {
+              current = await captureHandoffSnapshot(browser.page);
+            } catch {
+              continue;
+            }
+            const change = classifyHandoffChange(baseline, current);
+            if (!change) continue;
+            transitioned = true;
+            assistTransitions += 1;
+            repeatedStates.clear();
+            automaticSteps = 0;
+            await this.logger.event({
+              personId: person.id,
+              siteId: site.id,
+              url: browser.page.url(),
+              pageStep: ledgerStep,
+              action: "operator_page_transition",
+              outcome: "no_form_timer_reset",
+              message: `${change.reason}; previous URL=${safeUrl(baseline.url)}`,
+            });
+            this.control.progress(`${progress} | Operator/page transition detected; timer reset and rescan started`);
+            await browser.page.waitForLoadState("domcontentloaded", { timeout: 2_000 }).catch(() => undefined);
+            await browser.page.waitForTimeout(350);
+            break;
+          }
+          if (transitioned) continue;
+          if (!handoff) return await this.markDeferred(person, site, attempt, `No confirmed signup flow after ${assistSeconds}-second operator-assist window`);
         }
 
         if (handoff) {
@@ -504,21 +654,49 @@ export class WorkflowEngine {
         if (!scan.action || scan.action.kind === "ambiguous") {
           throw new Error("Internal navigation decision was incomplete.");
         }
+        // Apply hotkeys received while scan/fill was running before any click,
+        // especially before a final submit.
+        const beforeClick = await this.checkpointOrStop();
+        if (beforeClick === "defer" || beforeClick === "retry" || beforeClick === "skip") {
+          if (submittedThisAttempt) return await this.markSubmittedUnconfirmed(person, site, attempt, browser.page, `Operator ${beforeClick}`);
+          throw new SiteControlSignal(beforeClick);
+        }
+        if (beforeClick === "handoff") {
+          const decision = await this.handoff(person, site, attempt, { category: "HUMAN_CONSENT", reason: "Operator requested handoff before navigation" }, browser.page);
+          if (decision.kind === "completed") return await this.markCompleted(site, attempt, browser.page.url(), ledgerStep, progress, decision.reason);
+          repeatedStates.clear();
+          automaticSteps = 0;
+          continue;
+        }
         automaticSteps += 1;
         await this.logger.event({
           personId: person.id,
           siteId: site.id,
           url: browser.page.url(),
           pageStep: ledgerStep,
-          action: scan.action.kind === "final" ? "click_final" : "click_next",
+          action: scan.action.kind === "final" ? "click_final" : scan.action.kind === "signup" ? "click_signup_entry" : "click_next",
           outcome: scan.action.label,
         });
         await browser.clickAndSettle(scan.action.locator);
+        if (scan.action.kind === "final") {
+          // Record that a submit was sent, pinned to the post-submit page, so any
+          // later bail-out (hotkey, stop, load failure) resumes here rather than
+          // resubmitting from the entry URL.
+          submittedThisAttempt = true;
+          await this.workbook.updateAttempt(attempt, {
+            formStep: ledgerStep + 1,
+            lastUrl: safeUrl(browser.page.url()),
+            notes: `Submitted "${scan.action.label}"; awaiting confirmation`,
+          });
+        }
       }
     } catch (error) {
       if (error instanceof StopRunError || error instanceof SiteControlSignal) throw error;
       const category = classifyNavigationError(error);
       await browser.screenshotIfSafe(site, attempt.formStep, safeToScreenshot, category).catch(() => undefined);
+      if (submittedThisAttempt) {
+        return await this.markSubmittedUnconfirmed(person, site, attempt, browser.page, `Post-submit ${category}`);
+      }
       if (category === "REDIRECT_LOOP") return await this.markInvalid(site, attempt, category, finalUrl, "Redirect loop detected");
       return await this.markTemporary(site, attempt, category, finalUrl, error instanceof Error ? error.message : category);
     }

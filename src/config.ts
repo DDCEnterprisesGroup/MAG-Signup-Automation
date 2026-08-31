@@ -19,6 +19,7 @@ export interface AppConfig {
   siteDelayMaxMs: number;
   maxFormSteps: number;
   maxRepeatedPageState: number;
+  operatorAssistTimeoutMs?: number;
   screenshotOnError: boolean;
   retryCount: number;
   maxAutoDeferrals: number;
@@ -41,6 +42,7 @@ interface ConfigFile {
   siteDelayMaxMs: number;
   maxFormSteps: number;
   maxRepeatedPageState: number;
+  operatorAssistTimeoutMs?: number;
   screenshotOnError: boolean;
   retryCount: number;
   maxAutoDeferrals: number;
@@ -101,6 +103,7 @@ export async function loadConfig(projectRoot = process.cwd()): Promise<AppConfig
     siteDelayMaxMs: envInteger("SITE_DELAY_MAX_MS", defaults.siteDelayMaxMs),
     maxFormSteps: envInteger("MAX_FORM_STEPS", defaults.maxFormSteps),
     maxRepeatedPageState: envInteger("MAX_REPEATED_PAGE_STATE", defaults.maxRepeatedPageState),
+    operatorAssistTimeoutMs: envInteger("OPERATOR_ASSIST_TIMEOUT_MS", defaults.operatorAssistTimeoutMs ?? 20_000),
     screenshotOnError: envBoolean("SCREENSHOT_ON_ERROR", defaults.screenshotOnError),
     retryCount: envInteger("RETRY_COUNT", defaults.retryCount),
     maxAutoDeferrals: envInteger("MAX_AUTO_DEFERRALS", defaults.maxAutoDeferrals ?? 4),
@@ -120,6 +123,7 @@ export async function loadConfig(projectRoot = process.cwd()): Promise<AppConfig
   if (
     config.maxFormSteps < 1 ||
     config.maxRepeatedPageState < 1 ||
+    (config.operatorAssistTimeoutMs ?? 0) < 1 ||
     config.navigationTimeoutMs < 1 ||
     config.navigationRetryTimeoutMs < config.navigationTimeoutMs ||
     config.navigationRetries < 0 ||

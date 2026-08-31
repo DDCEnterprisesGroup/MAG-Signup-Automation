@@ -10,6 +10,7 @@
   "siteDelayMaxMs": 2500,
   "maxFormSteps": 12,
   "maxRepeatedPageState": 2,
+  "operatorAssistTimeoutMs": 20000,
   "screenshotOnError": false,
   "retryCount": 2,
   "maxAutoDeferrals": 4,

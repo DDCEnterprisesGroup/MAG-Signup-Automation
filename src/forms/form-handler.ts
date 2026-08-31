@@ -14,6 +14,7 @@ import {
 import { IDENTITY_FIELDS, prefilledValueConflicts } from "./prefill-check.js";
 
 export type NavigationAction =
+  | { kind: "signup"; locator: Locator; label: string; confidence: number }
   | { kind: "next"; locator: Locator; label: string; confidence: number }
   | { kind: "final"; locator: Locator; label: string; confidence: number }
   | { kind: "ambiguous"; locator?: Locator; label: string; confidence: number };
@@ -27,6 +28,7 @@ export interface PageScanResult {
   humanHandoff?: HumanHandoffReason;
   action?: NavigationAction;
   stateHash: string;
+  phase: "LANDING_OR_INTERMEDIATE" | "REGISTRATION_FORM" | "FINAL_REGISTRATION_STEP" | "BLOCKED" | "COMPLETE";
   /** Identity fields (email / firstName / lastName) this scan filled or confirmed as matching the client. */
   identityFieldsSeen?: string[];
 }
@@ -245,6 +247,39 @@ async function findNavigationAction(
   return undefined;
 }
 
+async function findSignupEntryAction(page: Page): Promise<NavigationAction | undefined> {
+  const controls = page.locator('a[href], button, input[type="button"]');
+  const count = await controls.count();
+  for (let index = 0; index < count; index += 1) {
+    const control = controls.nth(index);
+    if (!(await control.isVisible().catch(() => false))) continue;
+    const candidate = await control.evaluate((element) => ({
+      text: ((element as HTMLInputElement).value || element.textContent || element.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim(),
+      href: element instanceof HTMLAnchorElement ? element.href : "",
+      disabled: (element as HTMLButtonElement).disabled || element.getAttribute("aria-disabled") === "true",
+    }));
+    if (candidate.disabled) continue;
+    if (!/^(sign[ -]?up|register|registration|join now|create (an? )?account|create profile|become a member|enroll|get started)$/i.test(candidate.text)) continue;
+    if (/\b(pay|payment|checkout|purchase|buy|donate|subscribe now|log[ -]?in|sign[ -]?in)\b/i.test(candidate.text)) continue;
+    if (candidate.href) {
+      let target: URL;
+      let current: URL;
+      try {
+        target = new URL(candidate.href);
+        current = new URL(page.url());
+      } catch {
+        continue;
+      }
+      if (target.protocol !== "http:" && target.protocol !== "https:") continue;
+      const sameSite = target.hostname === current.hostname || target.hostname.endsWith(`.${current.hostname}`) || current.hostname.endsWith(`.${target.hostname}`);
+      if (!sameSite) continue;
+      if (/\b(checkout|payment|billing|donate|cart)\b/i.test(`${target.pathname} ${target.search}`)) continue;
+    }
+    return { kind: "signup", locator: control, label: candidate.text, confidence: 95 };
+  }
+  return undefined;
+}
+
 async function pageLooksComplete(page: Page, hasVisibleProfileForm: boolean): Promise<boolean> {
   if (hasVisibleProfileForm || (await visibleValidationErrors(page))) return false;
   const text = (await page.locator("body").innerText({ timeout: 3_000 }).catch(() => "")).slice(0, 20_000).toLowerCase();
@@ -271,6 +306,7 @@ export async function scanAndFillPage(
       accountFlow,
       humanHandoff: initialBlocker,
       stateHash: await currentPageState(page),
+      phase: "BLOCKED",
     };
   }
 
@@ -293,6 +329,7 @@ export async function scanAndFillPage(
         accountFlow,
         humanHandoff: { category: "REQUIRED_MANUAL_FIELD", reason: `Restricted ${sensitive.reason} requires operator input` },
         stateHash: await currentPageState(page),
+        phase: "BLOCKED",
       };
     }
     const match = matchProfileField(descriptor, { registry, accountFlow });
@@ -323,6 +360,7 @@ export async function scanAndFillPage(
           },
           stateHash: await currentPageState(page),
           identityFieldsSeen,
+          phase: "BLOCKED",
         };
       }
       if (IDENTITY_FIELDS.has(match.field)) identityFieldsSeen.push(match.field);
@@ -352,6 +390,7 @@ export async function scanAndFillPage(
       accountFlow,
       humanHandoff: { category: "REQUIRED_MANUAL_FIELD", reason: "A required field or validation error has no permitted automatic resolution" },
       stateHash: await currentPageState(page),
+      phase: "BLOCKED",
     };
   }
 
@@ -365,9 +404,17 @@ export async function scanAndFillPage(
       accountFlow,
       stateHash: await currentPageState(page),
       identityFieldsSeen,
+      phase: "COMPLETE",
     };
   }
-  const action = await findNavigationAction(page, recognizedFieldCount, accountFlow);
+  const action = recognizedFieldCount > 0
+    ? await findNavigationAction(page, recognizedFieldCount, accountFlow)
+    : await findSignupEntryAction(page);
+  const phase = action?.kind === "final"
+    ? "FINAL_REGISTRATION_STEP"
+    : recognizedFieldCount > 0
+      ? "REGISTRATION_FORM"
+      : "LANDING_OR_INTERMEDIATE";
   return {
     success: false,
     filledFields,
@@ -377,6 +424,7 @@ export async function scanAndFillPage(
     ...(action ? { action } : {}),
     stateHash: await currentPageState(page),
     identityFieldsSeen,
+    phase,
   };
 }
 

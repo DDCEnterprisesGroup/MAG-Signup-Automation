@@ -55,6 +55,9 @@ export class BrowserSession {
     this.context.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
     this.context.setDefaultTimeout(Math.min(this.config.navigationTimeoutMs, 15_000));
     this.pageValue = this.context.pages()[0] ?? (await this.context.newPage());
+    this.context.on("page", (page) => {
+      this.pageValue = page;
+    });
   }
 
   async navigate(url: string): Promise<NavigationResult> {
@@ -103,8 +106,11 @@ export class BrowserSession {
   }
 
   async clickAndSettle(locator: import("playwright").Locator): Promise<void> {
+    const priorPage = this.pageValue;
     await locator.click({ timeout: 10_000 });
-    await this.page.waitForLoadState("domcontentloaded", { timeout: Math.min(10_000, this.config.navigationTimeoutMs) }).catch(() => undefined);
+    // A signup entry control may open a new tab. The context listener makes it
+    // the active workflow page; otherwise continue on the original page.
+    if (this.pageValue === priorPage) await this.page.waitForLoadState("domcontentloaded", { timeout: Math.min(10_000, this.config.navigationTimeoutMs) }).catch(() => undefined);
     await this.page.waitForTimeout(600);
   }
 
