@@ -165,6 +165,7 @@ export interface RunStats {
   failed: number;
   waitingForHuman: number;
   skipped: number;
+  deferred: number;
 }
 
 export interface PersonSummary {
@@ -186,5 +187,13 @@ export class StopRunError extends Error {
   constructor(message = "Operator requested a safe stop") {
     super(message);
     this.name = "StopRunError";
+  }
+}
+
+/** Raised at an engine checkpoint when an operator hotkey redirects the current site. */
+export class SiteControlSignal extends Error {
+  constructor(readonly kind: "defer" | "retry" | "skip") {
+    super(`Operator ${kind} for current site`);
+    this.name = "SiteControlSignal";
   }
 }

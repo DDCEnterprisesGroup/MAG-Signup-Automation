@@ -15,14 +15,24 @@ import type {
   Site,
   SiteIssue,
 } from "../types/models.js";
-import { StopRunError } from "../types/models.js";
+import { SiteControlSignal, StopRunError } from "../types/models.js";
 import { normalizeUrl, safeUrl, sameSiteHost } from "../utils/text.js";
 import { eligibilityConfig, isSiteProcessable } from "./eligibility.js";
 import { waitForOperator, type OperatorHandoffDecision } from "./human-handoff.js";
+import { NullOperatorControl, type OperatorControl } from "./operator-console.js";
 
-type SiteOutcome = "completed" | "failed" | "invalid";
+type SiteOutcome = "completed" | "failed" | "invalid" | "deferred";
 
 const terminalSiteStatuses = new Set(["DUPLICATE", "INVALID", "INACTIVE", "SITE CLOSED", "CLOSED"]);
+
+// Failures that mean "slow / briefly unreachable", not "broken": these stay in
+// the deferred retry queue instead of trending toward a permanent FAILED.
+const LOAD_FAILURE_CATEGORIES = new Set<ErrorCategory>([
+  "NETWORK_TIMEOUT",
+  "DNS_FAILURE",
+  "TEMPORARY_ERROR",
+  "HTTP_5XX",
+]);
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -79,17 +89,30 @@ function issueFor(
 
 export class WorkflowEngine {
   private stopRequested = false;
-  private readonly stats: RunStats = { completed: 0, failed: 0, waitingForHuman: 0, skipped: 0 };
+  private readonly stats: RunStats = { completed: 0, failed: 0, waitingForHuman: 0, skipped: 0, deferred: 0 };
 
   constructor(
     private readonly config: AppConfig,
     private readonly workbook: WorkbookStore,
     private readonly logger: Logger,
     private readonly fieldRegistry: FieldRegistry = getDefaultFieldRegistry(),
+    private readonly control: OperatorControl = new NullOperatorControl(),
   ) {}
 
   requestStop(): void {
     this.stopRequested = true;
+  }
+
+  /**
+   * Safe checkpoint for cooperative cancellation. Blocks while the operator has
+   * paused, converts a stop request into the existing StopRunError path, and
+   * returns any pending site-scoped hotkey request for the caller to apply.
+   */
+  private async checkpointOrStop(): Promise<"defer" | "retry" | "skip" | "handoff" | null> {
+    const request = await this.control.checkpoint();
+    if (this.control.stopRequested) this.stopRequested = true;
+    if (this.stopRequested) throw new StopRunError("Stop requested");
+    return request;
   }
 
   async run(selectedPersonIds?: ReadonlySet<string>, selectedSiteIds?: ReadonlySet<string>): Promise<RunStats> {
@@ -103,7 +126,7 @@ export class WorkflowEngine {
     await Promise.all(
       Array.from({ length: workerCount }, async () => {
         while (nextPersonIndex < people.length) {
-          if (this.stopRequested) throw new StopRunError("Stop requested");
+          await this.checkpointOrStop();
           const person = people[nextPersonIndex];
           nextPersonIndex += 1;
           if (person) await this.processPerson(person, sites);
@@ -186,21 +209,38 @@ export class WorkflowEngine {
     try {
       await this.workbook.updatePerson(person, "IN PROGRESS", person.currentSiteId);
       for (let index = 0; index < sites.length; index += 1) {
-        if (this.stopRequested) throw new StopRunError("Stop requested");
         const site = sites[index];
         if (!site || !this.shouldProcess(person, site)) {
           this.stats.skipped += 1;
           continue;
         }
+        const preRequest = await this.checkpointOrStop();
         const progress = `${person.id} | Site ${index + 1} / ${sites.length} | ${site.name}`;
+        this.control.setStatus({
+          personId: person.id,
+          siteId: site.id,
+          siteName: site.name,
+          phase: "starting",
+          attempt: "",
+          siteStartedAt: Date.now(),
+        });
         console.log(`${progress} | Starting`);
         await this.workbook.updatePerson(person, "IN PROGRESS", site.id);
         const prior = this.workbook.getLatestAttempt(person.id, site.id);
         const attempt = await this.workbook.beginOrResumeAttempt(person, site, prior);
-        const outcome = await this.processSite(browser, person, site, attempt, progress);
-        if (outcome === "completed") this.stats.completed += 1;
-        else if (outcome === "failed") this.stats.failed += 1;
-        else this.stats.skipped += 1;
+        const outcome = await this.runSiteWithControls(browser, person, site, attempt, progress, preRequest);
+        if (outcome === "completed") {
+          this.stats.completed += 1;
+          this.control.countCompleted();
+        } else if (outcome === "failed") {
+          this.stats.failed += 1;
+          this.control.countFailed();
+        } else if (outcome === "deferred") {
+          this.stats.deferred += 1;
+          this.control.countDeferred();
+        } else {
+          this.stats.skipped += 1;
+        }
         await this.workbook.updatePersonSummary(person);
         await delay(randomDelay(this.config.siteDelayMinMs, this.config.siteDelayMaxMs));
       }
@@ -214,6 +254,92 @@ export class WorkflowEngine {
     } finally {
       await browser.close();
     }
+  }
+
+  /**
+   * Runs one site attempt, translating operator hotkey signals raised at engine
+   * checkpoints into safe outcomes: SPACE defers, S permanently skips, R retries
+   * the same site from the top a bounded number of times.
+   */
+  private async runSiteWithControls(
+    browser: BrowserSession,
+    person: PersonProfile,
+    site: Site,
+    attempt: AttemptRecord,
+    progress: string,
+    preRequest: "defer" | "retry" | "skip" | "handoff" | null,
+  ): Promise<SiteOutcome> {
+    if (preRequest === "defer") return this.markDeferred(person, site, attempt, "Operator deferred before navigation");
+    if (preRequest === "skip") return this.markPermanentSkip(site, attempt, "Operator permanent skip before navigation");
+    if (preRequest === "retry" || preRequest === "handoff") {
+      this.control.note(`${preRequest.toUpperCase()} ignored: no page is loaded yet for ${site.id}.`);
+    }
+    let manualRetries = 0;
+    while (true) {
+      try {
+        return await this.processSite(browser, person, site, attempt, progress);
+      } catch (error) {
+        if (!(error instanceof SiteControlSignal)) throw error;
+        if (error.kind === "defer") return this.markDeferred(person, site, attempt, "Operator pressed SPACE");
+        if (error.kind === "skip") return this.markPermanentSkip(site, attempt, "Operator pressed S");
+        manualRetries += 1;
+        if (manualRetries > 3) return this.markDeferred(person, site, attempt, "Operator retry limit reached");
+        await this.workbook.updateAttempt(attempt, {
+          status: "IN PROGRESS",
+          formStep: 0,
+          errorType: "",
+          retryEligible: "YES",
+          notes: `Operator retry ${manualRetries}`,
+        });
+        this.control.note(`Retrying ${site.id} (operator retry ${manualRetries}/3).`);
+      }
+    }
+  }
+
+  private async markDeferred(
+    person: PersonProfile,
+    site: Site,
+    attempt: AttemptRecord,
+    reason: string,
+  ): Promise<SiteOutcome> {
+    const deferCount = this.workbook.getDeferralCount(attempt.personId, attempt.siteId) + 1;
+    await this.workbook.updateAttempt(attempt, {
+      status: "OPERATOR_DEFERRED",
+      lastUrl: safeUrl(attempt.lastUrl),
+      errorType: "OPERATOR_DEFERRED",
+      retryEligible: "YES",
+      notes: `${reason}; deferred ${deferCount}, still retryable on a later run`,
+    });
+    await this.logger.event({
+      personId: attempt.personId,
+      siteId: site.id,
+      pageStep: attempt.formStep,
+      action: "operator_deferred",
+      outcome: "OPERATOR_DEFERRED",
+      errorCategory: "OPERATOR_DEFERRED",
+      message: reason,
+    });
+    console.log(`${person.id} | ${site.id} | OPERATOR_DEFERRED | ${reason}`);
+    return "deferred";
+  }
+
+  private async markPermanentSkip(site: Site, attempt: AttemptRecord, reason: string): Promise<SiteOutcome> {
+    await this.workbook.updateAttempt(attempt, {
+      status: "FAILED",
+      lastUrl: safeUrl(attempt.lastUrl),
+      retryEligible: "NO",
+      notes: `${reason} ${new Date().toISOString()}`,
+    });
+    await this.logger.event({
+      personId: attempt.personId,
+      siteId: site.id,
+      pageStep: attempt.formStep,
+      action: "operator_permanent_skip",
+      outcome: "FAILED",
+      message: reason,
+    });
+    console.log(`${attempt.personId} | ${site.id} | PERMANENT SKIP | ${reason}`);
+    return "failed";
   }
 
   private async processSite(
@@ -235,6 +361,7 @@ export class WorkflowEngine {
       }
 
       console.log(`${progress} | Navigating`);
+      this.control.setStatus({ phase: "loading" });
       await this.logger.event({ personId: person.id, siteId: site.id, url: normalizedTarget, action: "navigate", outcome: "started" });
       const navigation = await browser.navigate(normalizedTarget);
       finalUrl = navigation.finalUrl;
@@ -280,7 +407,22 @@ export class WorkflowEngine {
       let ledgerStep = Math.max(0, attempt.formStep);
       let sawRecognizedForm = false;
       while (true) {
-        if (this.stopRequested) throw new StopRunError("Stop requested");
+        const request = await this.checkpointOrStop();
+        if (request === "defer" || request === "retry" || request === "skip") throw new SiteControlSignal(request);
+        if (request === "handoff") {
+          const decision = await this.handoff(
+            person,
+            site,
+            attempt,
+            { category: "HUMAN_CONSENT", reason: "Operator requested a human handoff via hotkey" },
+            browser.page,
+          );
+          if (decision.kind === "completed") {
+            return await this.markCompleted(site, attempt, browser.page.url(), Math.max(1, ledgerStep), progress, decision.reason);
+          }
+          repeatedStates.clear();
+          automaticSteps = 0;
+        }
         ledgerStep += 1;
         await this.workbook.updateAttempt(attempt, {
           status: "IN PROGRESS",
@@ -290,6 +432,7 @@ export class WorkflowEngine {
           retryEligible: "YES",
           notes: `Scanning page ${ledgerStep}`,
         });
+        this.control.setStatus({ phase: `scanning page ${ledgerStep}`, attempt: `${automaticSteps + 1}` });
         console.log(`${progress} | Scanning Page ${ledgerStep}`);
         const scan = await scanAndFillPage(browser.page, person, this.fieldRegistry);
         if (scan.recognizedFieldCount > 0) {
@@ -364,7 +507,7 @@ export class WorkflowEngine {
         await browser.clickAndSettle(scan.action.locator);
       }
     } catch (error) {
-      if (error instanceof StopRunError) throw error;
+      if (error instanceof StopRunError || error instanceof SiteControlSignal) throw error;
       const category = classifyNavigationError(error);
       await browser.screenshotIfSafe(site, attempt.formStep, safeToScreenshot, category).catch(() => undefined);
       if (category === "REDIRECT_LOOP") return await this.markInvalid(site, attempt, category, finalUrl, "Redirect loop detected");
@@ -400,7 +543,16 @@ export class WorkflowEngine {
       errorCategory: reason.category,
       message: reason.reason,
     });
-    const decision = await waitForOperator(person, site, attempt, reason, page);
+    this.control.countHandoff();
+    this.control.setStatus({ phase: "waiting for human" });
+    // Release the raw-mode keyboard so the handoff prompt's own readline can use stdin.
+    this.control.suspendInput();
+    let decision: OperatorHandoffDecision;
+    try {
+      decision = await waitForOperator(person, site, attempt, reason, page);
+    } finally {
+      this.control.resumeInput();
+    }
     this.stats.waitingForHuman = Math.max(0, this.stats.waitingForHuman - 1);
     if (decision.kind === "completed") return decision;
 
@@ -493,6 +645,16 @@ export class WorkflowEngine {
     httpStatus: number | "" = "",
   ): Promise<SiteOutcome> {
     const attemptsUsed = this.workbook.getAttemptCount(attempt.personId, attempt.siteId);
+
+    // A slow or briefly-unreachable site is not a broken site. Load-related
+    // failures go to the deferred retry queue and stay retryable up to a wider
+    // ceiling; they are only converted to a permanent FAILED once that wider
+    // ceiling is exhausted. Access blocks and other site errors keep the normal
+    // (narrower) retry budget.
+    if (LOAD_FAILURE_CATEGORIES.has(category) && attemptsUsed < this.config.retryCount + this.config.maxAutoDeferrals + 1) {
+      return this.deferLoadFailure(site, attempt, category, finalUrl, note, httpStatus);
+    }
+
     const retryEligible = attemptsUsed < this.config.retryCount + 1 ? "YES" : "NO";
     const status = retryEligible === "YES" ? "TEMP FAILURE" : "FAILED";
     await this.workbook.updateAttempt(attempt, {
@@ -517,5 +679,37 @@ export class WorkflowEngine {
     });
     console.log(`${site.id} | ${status} | ${category}`);
     return "failed";
+  }
+
+  private async deferLoadFailure(
+    site: Site,
+    attempt: AttemptRecord,
+    category: ErrorCategory,
+    finalUrl: string,
+    note: string,
+    httpStatus: number | "" = "",
+  ): Promise<SiteOutcome> {
+    const deferCount = this.workbook.getDeferralCount(attempt.personId, attempt.siteId) + 1;
+    await this.workbook.updateAttempt(attempt, {
+      status: "OPERATOR_DEFERRED",
+      lastUrl: safeUrl(finalUrl),
+      errorType: category,
+      retryEligible: "YES",
+      notes: `${note}; slow or unreachable, deferred ${deferCount} to the retry queue`,
+    });
+    await this.workbook.recordSiteIssue(issueFor(site, category, "TEMP ERROR", finalUrl, note, httpStatus));
+    await this.workbook.updateSite(site, "TEMP ERROR", finalUrl, `${note} (deferred for retry)`);
+    await this.logger.event({
+      personId: attempt.personId,
+      siteId: site.id,
+      url: finalUrl,
+      pageStep: attempt.formStep,
+      action: "attempt_deferred",
+      outcome: "OPERATOR_DEFERRED",
+      errorCategory: category,
+      message: `${note} — will retry on a later run (${deferCount})`,
+    });
+    console.log(`${site.id} | OPERATOR_DEFERRED | ${category} | retry later (${deferCount})`);
+    return "deferred";
   }
 }

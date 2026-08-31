@@ -4,6 +4,7 @@ import { ensureFieldRegistry } from "./fields/field-registry.js";
 import { Logger } from "./logging/logger.js";
 import { StopRunError } from "./types/models.js";
 import { WorkflowEngine } from "./workflow/engine.js";
+import { NullOperatorControl, OperatorConsole, type OperatorControl } from "./workflow/operator-console.js";
 import { selectPeople } from "./workflow/person-selector.js";
 
 async function main(): Promise<void> {
@@ -12,6 +13,7 @@ async function main(): Promise<void> {
   const workbook = new WorkbookStore(config.workbookPath);
   await workbook.open();
   let engine: WorkflowEngine | undefined;
+  const control: OperatorControl = OperatorConsole.isAvailable() ? new OperatorConsole() : new NullOperatorControl();
   let interruptCount = 0;
   const onInterrupt = (): void => {
     interruptCount += 1;
@@ -35,8 +37,9 @@ async function main(): Promise<void> {
       console.log("No people selected. Exiting without processing sites.");
       return;
     }
-    engine = new WorkflowEngine(config, workbook, logger, registry);
+    engine = new WorkflowEngine(config, workbook, logger, registry, control);
     process.on("SIGINT", onInterrupt);
+    if (control instanceof OperatorConsole) control.start();
     console.log(`Workbook: ${config.workbookPath}`);
     console.log(`Log: ${logger.logPath}`);
     if (reconciliation.unknownFields.length > 0) {
@@ -47,7 +50,7 @@ async function main(): Promise<void> {
     }
     const stats = await engine.run(new Set(selection.personIds), requestedSiteId ? new Set([requestedSiteId]) : undefined);
     console.log(
-      `Run finished | completed=${stats.completed} failed=${stats.failed} waiting=${stats.waitingForHuman} skipped=${stats.skipped}`,
+      `Run finished | completed=${stats.completed} failed=${stats.failed} deferred=${stats.deferred} waiting=${stats.waitingForHuman} skipped=${stats.skipped}`,
     );
   } catch (error) {
     if (error instanceof StopRunError) {
@@ -62,6 +65,7 @@ async function main(): Promise<void> {
     });
     throw error;
   } finally {
+    control.close();
     process.off("SIGINT", onInterrupt);
     await workbook.release();
   }
