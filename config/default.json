@@ -12,5 +12,6 @@
   "maxRepeatedPageState": 2,
   "screenshotOnError": false,
   "retryCount": 2,
+  "maxAutoDeferrals": 4,
   "dryRun": false
 }

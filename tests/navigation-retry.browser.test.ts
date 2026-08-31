@@ -50,6 +50,7 @@ function config(root: string): AppConfig {
     maxRepeatedPageState: 2,
     screenshotOnError: false,
     retryCount: 2,
+    maxAutoDeferrals: 4,
     dryRun: true,
     logsDir: path.join(root, "logs"),
     screenshotsDir: path.join(root, "screenshots"),

@@ -21,6 +21,7 @@ export interface AppConfig {
   maxRepeatedPageState: number;
   screenshotOnError: boolean;
   retryCount: number;
+  maxAutoDeferrals: number;
   dryRun: boolean;
   logsDir: string;
   screenshotsDir: string;
@@ -42,6 +43,7 @@ interface ConfigFile {
   maxRepeatedPageState: number;
   screenshotOnError: boolean;
   retryCount: number;
+  maxAutoDeferrals: number;
   dryRun: boolean;
 }
 
@@ -101,6 +103,7 @@ export async function loadConfig(projectRoot = process.cwd()): Promise<AppConfig
     maxRepeatedPageState: envInteger("MAX_REPEATED_PAGE_STATE", defaults.maxRepeatedPageState),
     screenshotOnError: envBoolean("SCREENSHOT_ON_ERROR", defaults.screenshotOnError),
     retryCount: envInteger("RETRY_COUNT", defaults.retryCount),
+    maxAutoDeferrals: envInteger("MAX_AUTO_DEFERRALS", defaults.maxAutoDeferrals ?? 4),
     dryRun: cliDryRun || envBoolean("DRY_RUN", defaults.dryRun),
     logsDir: path.join(dataDir, "logs"),
     screenshotsDir: path.join(dataDir, "screenshots"),
@@ -120,7 +123,8 @@ export async function loadConfig(projectRoot = process.cwd()): Promise<AppConfig
     config.navigationTimeoutMs < 1 ||
     config.navigationRetryTimeoutMs < config.navigationTimeoutMs ||
     config.navigationRetries < 0 ||
-    config.retryDelayMs < 0
+    config.retryDelayMs < 0 ||
+    config.maxAutoDeferrals < 0
   ) {
     throw new Error("Navigation and form-step limits must be greater than zero.");
   }

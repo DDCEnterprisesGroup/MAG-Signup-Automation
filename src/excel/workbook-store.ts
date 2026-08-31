@@ -98,6 +98,7 @@ const ATTEMPT_STATUS_SET = new Set<AttemptStatus>([
   "FAILED",
   "SITE INVALID",
   "TEMP FAILURE",
+  "OPERATOR_DEFERRED",
 ]);
 
 type CellValue = string | number;
@@ -775,6 +776,12 @@ export class WorkbookStore {
 
   getAttemptCount(personId: string, siteId: string): number {
     return this.attempts.filter((attempt) => attempt.personId === personId && attempt.siteId === siteId).length;
+  }
+
+  getDeferralCount(personId: string, siteId: string): number {
+    return this.attempts.filter(
+      (attempt) => attempt.personId === personId && attempt.siteId === siteId && attempt.status === "OPERATOR_DEFERRED",
+    ).length;
   }
 
   isSiteGloballyExcluded(siteId: string): boolean {

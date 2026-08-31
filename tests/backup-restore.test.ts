@@ -28,6 +28,7 @@ function config(projectRoot: string, dataDir: string): AppConfig {
     maxRepeatedPageState: 2,
     screenshotOnError: false,
     retryCount: 2,
+    maxAutoDeferrals: 4,
     dryRun: true,
     logsDir: path.join(dataDir, "logs"),
     screenshotsDir: path.join(dataDir, "screenshots"),

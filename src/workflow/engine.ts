@@ -17,6 +17,7 @@ import type {
 } from "../types/models.js";
 import { StopRunError } from "../types/models.js";
 import { normalizeUrl, safeUrl, sameSiteHost } from "../utils/text.js";
+import { eligibilityConfig, isSiteProcessable } from "./eligibility.js";
 import { waitForOperator, type OperatorHandoffDecision } from "./human-handoff.js";
 
 type SiteOutcome = "completed" | "failed" | "invalid";
@@ -147,13 +148,14 @@ export class WorkflowEngine {
   }
 
   private shouldProcess(person: PersonProfile, site: Site): boolean {
-    const latest = this.workbook.getLatestAttempt(person.id, site.id);
-    if (!latest) return true;
-    if (latest.status === "COMPLETED" || latest.status === "SITE INVALID") return false;
-    if (latest.status === "WAITING FOR HUMAN" || latest.status === "IN PROGRESS") return true;
-    if (latest.notes.startsWith("Manual reset authorized")) return true;
-    if (latest.retryEligible === "NO") return false;
-    return this.workbook.getAttemptCount(person.id, site.id) < this.config.retryCount + 1;
+    return isSiteProcessable(
+      {
+        latest: this.workbook.getLatestAttempt(person.id, site.id),
+        attemptCount: this.workbook.getAttemptCount(person.id, site.id),
+        deferralCount: this.workbook.getDeferralCount(person.id, site.id),
+      },
+      eligibilityConfig(this.config),
+    );
   }
 
   private async processPerson(person: PersonProfile, sites: Site[]): Promise<void> {

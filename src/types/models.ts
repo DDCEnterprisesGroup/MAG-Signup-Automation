@@ -5,6 +5,7 @@ export const ATTEMPT_STATUSES = [
   "FAILED",
   "SITE INVALID",
   "TEMP FAILURE",
+  "OPERATOR_DEFERRED",
 ] as const;
 
 export type AttemptStatus = (typeof ATTEMPT_STATUSES)[number];
@@ -28,6 +29,7 @@ export const ERROR_CATEGORIES = [
   "SITE_ERROR",
   "AUTOMATION_ERROR",
   "TEMPORARY_ERROR",
+  "OPERATOR_DEFERRED",
 ] as const;
 
 export type ErrorCategory = (typeof ERROR_CATEGORIES)[number];
