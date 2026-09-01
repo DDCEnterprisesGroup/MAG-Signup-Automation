@@ -116,6 +116,7 @@ async function detectPageBlocker(
   fields: FieldDescriptor[],
   profile: PersonProfile,
   accountFlow: AccountFlowContext,
+  includeFieldBlockers = true,
 ): Promise<HumanHandoffReason | undefined> {
   const captchaFrame = page.locator('iframe[src*="captcha" i], iframe[title*="captcha" i], iframe[src*="challenge" i]');
   if ((await captchaFrame.count()) > 0) return { category: "CAPTCHA", reason: "CAPTCHA or browser challenge detected" };
@@ -152,9 +153,11 @@ async function detectPageBlocker(
   if (smsPattern.test(bodyText) && otpPattern.test(bodyText)) {
     return { category: "SMS_VERIFICATION", reason: "SMS verification is required" };
   }
-  if (await visibleValidationErrors(page)) return { category: "REQUIRED_MANUAL_FIELD", reason: "Visible validation errors require review" };
+  if (includeFieldBlockers && (await visibleValidationErrors(page))) {
+    return { category: "REQUIRED_MANUAL_FIELD", reason: "Visible validation errors require review" };
+  }
 
-  for (const field of fields) {
+  for (const field of includeFieldBlockers ? fields : []) {
     const text = descriptorText(field);
     const sensitive = detectRestrictedSensitiveField(field);
     if (sensitive?.kind === "password") {
@@ -371,9 +374,17 @@ export async function scanAndFillPage(
   profile: PersonProfile,
   registry: FieldRegistry = getDefaultFieldRegistry(),
 ): Promise<PageScanResult> {
+  // Anchor every decision to the DOM that was present when this scan began.
+  // If a dynamic form appears while inventory/classification is running, the
+  // engine's stale-scan guard must compare against this earlier state and force
+  // a fresh inventory rather than accepting mixed old/new evidence.
+  const initialStateHash = await currentPageState(page);
   const fields = await collectFields(page);
   const accountFlow = await classifyAccountFlow(page);
-  const initialBlocker = await detectPageBlocker(page, fields, profile, accountFlow);
+  // CAPTCHA, verification, and payment context remain immediate hard stops.
+  // Field-level manual requirements are collected below so every other safe,
+  // visible field on the same page can be populated before handoff.
+  const initialBlocker = await detectPageBlocker(page, fields, profile, accountFlow, false);
   if (initialBlocker) {
     return {
       success: false,
@@ -382,7 +393,7 @@ export async function scanAndFillPage(
       visibleFieldCount: fields.length,
       accountFlow,
       humanHandoff: initialBlocker,
-      stateHash: await currentPageState(page),
+      stateHash: initialStateHash,
       phase: "BLOCKED",
     };
   }
@@ -392,22 +403,50 @@ export async function scanAndFillPage(
   const identityFieldsSeen: string[] = [];
   let recognizedFieldCount = 0;
   const unmappedRequired: FieldDescriptor[] = [];
+  const manualRequirements: HumanHandoffReason[] = [];
+
+  const requireManual = (requirement: HumanHandoffReason): void => {
+    if (!manualRequirements.some((existing) => existing.category === requirement.category && existing.reason === requirement.reason)) {
+      manualRequirements.push(requirement);
+    }
+  };
 
   for (const descriptor of fields) {
-    if (descriptor.disabled || descriptor.readOnly || descriptor.type === "checkbox" || descriptor.type === "radio" || descriptor.type === "file") continue;
+    if (descriptor.disabled || descriptor.readOnly) continue;
     // Sensitive classification always executes before normal profile matching.
     const sensitive = detectRestrictedSensitiveField(descriptor);
     if (sensitive && sensitive.kind !== "password") {
-      return {
-        success: false,
-        filledFields: [],
-        recognizedFieldCount: 0,
-        visibleFieldCount: fields.length,
-        accountFlow,
-        humanHandoff: { category: "REQUIRED_MANUAL_FIELD", reason: `Restricted ${sensitive.reason} requires operator input` },
-        stateHash: await currentPageState(page),
-        phase: "BLOCKED",
-      };
+      // This is still a confidently recognized registration-flow field even
+      // though policy forbids MAG from populating it. Counting it lets a
+      // completed operator entry expose a safe Next/Continue action on pages
+      // that contain no ordinary profile fields.
+      recognizedFieldCount += 1;
+      // A value already present in a restricted field is presumed to have been
+      // entered by the operator. Never read, replace, log, or validate it here;
+      // simply rescan and continue filling the remaining safe fields.
+      if (!descriptor.currentValue.trim()) {
+        requireManual({ category: "REQUIRED_MANUAL_FIELD", reason: `Restricted ${sensitive.reason} requires operator input` });
+      }
+      continue;
+    }
+    if (sensitive?.kind === "password" && accountFlow !== "registration") {
+      requireManual({
+        category: "REQUIRED_MANUAL_FIELD",
+        reason: "Password autofill is allowed only in a confidently identified registration flow",
+      });
+      continue;
+    }
+    if (descriptor.type === "file") {
+      if (descriptor.required || descriptor.invalid) {
+        requireManual({ category: "REQUIRED_MANUAL_FIELD", reason: "A required file or identity document is operator-controlled" });
+      }
+      continue;
+    }
+    if (descriptor.type === "checkbox" || descriptor.type === "radio") {
+      if (descriptor.required || descriptor.invalid) {
+        requireManual({ category: "HUMAN_CONSENT", reason: "A required consent or choice needs operator review" });
+      }
+      continue;
     }
     const match = matchProfileField(descriptor, { registry, accountFlow });
     if (!match) {
@@ -435,7 +474,7 @@ export async function scanAndFillPage(
             category: "REQUIRED_MANUAL_FIELD",
             reason: `A prefilled ${match.field} field does not match the active client; left for operator review`,
           },
-          stateHash: await currentPageState(page),
+          stateHash: initialStateHash,
           identityFieldsSeen,
           phase: "BLOCKED",
         };
@@ -458,6 +497,23 @@ export async function scanAndFillPage(
     }
   }
 
+  if (manualRequirements.length > 0) {
+    return {
+      success: false,
+      filledFields,
+      recognizedFieldCount,
+      visibleFieldCount: fields.length,
+      accountFlow,
+      humanHandoff: {
+        category: manualRequirements[0]!.category,
+        reason: manualRequirements.map((requirement) => requirement.reason).join("; "),
+      },
+      stateHash: initialStateHash,
+      identityFieldsSeen,
+      phase: "BLOCKED",
+    };
+  }
+
   if (unmappedRequired.length > 0 || (await visibleValidationErrors(page))) {
     return {
       success: false,
@@ -466,7 +522,7 @@ export async function scanAndFillPage(
       visibleFieldCount: fields.length,
       accountFlow,
       humanHandoff: { category: "REQUIRED_MANUAL_FIELD", reason: "A required field or validation error has no permitted automatic resolution" },
-      stateHash: await currentPageState(page),
+      stateHash: initialStateHash,
       phase: "BLOCKED",
     };
   }
@@ -479,7 +535,7 @@ export async function scanAndFillPage(
       recognizedFieldCount,
       visibleFieldCount: fields.length,
       accountFlow,
-      stateHash: await currentPageState(page),
+      stateHash: initialStateHash,
       identityFieldsSeen,
       phase: "COMPLETE",
     };
@@ -499,7 +555,7 @@ export async function scanAndFillPage(
     visibleFieldCount: fields.length,
     accountFlow,
     ...(action ? { action } : {}),
-    stateHash: await currentPageState(page),
+    stateHash: initialStateHash,
     identityFieldsSeen,
     phase,
   };

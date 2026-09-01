@@ -97,14 +97,84 @@ test("form mapping, password policy, DOB interfaces, consent, and auto-submit ga
       await page.close();
     });
 
-    await context.test("sensitive semantics prevent all filling even with conflicting attributes", async () => {
+    await context.test("safe fields are filled before an SSN handoff even with conflicting attributes", async () => {
       const page = await browser.newPage();
       await page.setContent('<h1>Register</h1><form><label>Mobile Phone <input id="safe-phone" type="tel" required></label><label>Social Security Number <input id="ssn" type="tel" name="phone" autocomplete="tel" required></label><button type="submit">Next</button></form>');
       const scan = await scanAndFillPage(page, person);
       assert.equal(scan.humanHandoff?.category, "REQUIRED_MANUAL_FIELD");
+      assert.match(scan.humanHandoff?.reason ?? "", /Social Security/);
       assert.equal(await page.locator("#ssn").inputValue(), "");
-      assert.equal(await page.locator("#safe-phone").inputValue(), "");
-      assert.deepEqual(scan.filledFields, []);
+      assert.equal(await page.locator("#safe-phone").inputValue(), person.phone);
+      assert.deepEqual(scan.filledFields, ["phone"]);
+      assert.equal(scan.action, undefined);
+      await page.close();
+    });
+
+    await context.test("SSN before visible safe fields still allows every safe field to fill before handoff", async () => {
+      const page = await browser.newPage();
+      await page.setContent('<h1>Register</h1><form><label>SSN <input id="ssn" required></label><label>First Name <input id="first" name="first_name" required></label><label>Email <input id="email" type="email" required></label><button type="submit">Next</button></form>');
+      const scan = await scanAndFillPage(page, person);
+      assert.equal(await page.locator("#ssn").inputValue(), "");
+      assert.equal(await page.locator("#first").inputValue(), person.firstName);
+      assert.equal(await page.locator("#email").inputValue(), person.email);
+      assert.deepEqual(new Set(scan.filledFields), new Set(["firstName", "email"]));
+      assert.match(scan.humanHandoff?.reason ?? "", /Social Security/);
+      await page.close();
+    });
+
+    await context.test("operator-entered SSN releases the handoff and the next page is rescanned and filled", async () => {
+      const page = await browser.newPage();
+      await page.setContent('<h1>Register</h1><form><label>SSN <input id="ssn" required></label><button type="submit">Next</button></form>');
+      const blocked = await scanAndFillPage(page, person);
+      assert.match(blocked.humanHandoff?.reason ?? "", /Social Security/);
+
+      await page.locator("#ssn").fill("operator-entered-value");
+      const resumed = await scanAndFillPage(page, person);
+      assert.equal(resumed.humanHandoff, undefined);
+      assert.equal(resumed.action?.kind, "next");
+
+      await page.setContent('<h1>Register - Contact</h1><form><label>First Name <input id="first" name="first_name" required></label><label>Email <input id="email" type="email" required></label><button type="submit">Next</button></form>');
+      const nextPage = await scanAndFillPage(page, person);
+      assert.equal(await page.locator("#first").inputValue(), person.firstName);
+      assert.equal(await page.locator("#email").inputValue(), person.email);
+      assert.deepEqual(new Set(nextPage.filledFields), new Set(["firstName", "email"]));
+      await page.close();
+    });
+
+    await context.test("multiple restricted fields remain untouched while safe fields around them fill", async () => {
+      const page = await browser.newPage();
+      await page.setContent('<h1>Register</h1><form><label>SSN <input id="ssn" required></label><label>First Name <input id="first" name="first_name" required></label><label>Passport Number <input id="passport" required></label><label>Phone <input id="phone" type="tel" required></label><button type="submit">Next</button></form>');
+      const scan = await scanAndFillPage(page, person);
+      assert.equal(await page.locator("#ssn").inputValue(), "");
+      assert.equal(await page.locator("#passport").inputValue(), "");
+      assert.equal(await page.locator("#first").inputValue(), person.firstName);
+      assert.equal(await page.locator("#phone").inputValue(), person.phone);
+      assert.deepEqual(new Set(scan.filledFields), new Set(["firstName", "phone"]));
+      assert.match(scan.humanHandoff?.reason ?? "", /Social Security/);
+      assert.match(scan.humanHandoff?.reason ?? "", /government identity/);
+      await page.close();
+    });
+
+    await context.test("manual edits during restricted handoff are revalidated and rescan never submits", async () => {
+      const page = await browser.newPage();
+      let submitCount = 0;
+      await page.setContent('<h1>Create Account</h1><form id="form"><label>Email <input id="email" type="email" required></label><label>SSN <input id="ssn" required></label><button type="submit">Create Account</button></form>');
+      await page.locator("#form").evaluate((form) => form.addEventListener("submit", (event) => event.preventDefault()));
+      page.on("console", () => undefined);
+      await page.exposeFunction("recordSubmit", () => { submitCount += 1; });
+      await page.locator("#form").evaluate((form) => form.addEventListener("submit", () => void (window as unknown as { recordSubmit: () => void }).recordSubmit()));
+
+      const blocked = await scanAndFillPage(page, person);
+      assert.equal(await page.locator("#email").inputValue(), person.email);
+      assert.match(blocked.humanHandoff?.reason ?? "", /Social Security/);
+      assert.equal(submitCount, 0);
+
+      await page.locator("#email").fill("different.person@example.invalid");
+      await page.locator("#ssn").fill("operator-entered-value");
+      const rescanned = await scanAndFillPage(page, person);
+      assert.match(rescanned.humanHandoff?.reason ?? "", /does not match the active client/);
+      assert.equal(rescanned.action, undefined);
+      assert.equal(submitCount, 0);
       await page.close();
     });
 
