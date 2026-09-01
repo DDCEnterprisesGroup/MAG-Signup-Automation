@@ -120,6 +120,30 @@ async function detectPageBlocker(
   const captchaFrame = page.locator('iframe[src*="captcha" i], iframe[title*="captcha" i], iframe[src*="challenge" i]');
   if ((await captchaFrame.count()) > 0) return { category: "CAPTCHA", reason: "CAPTCHA or browser challenge detected" };
 
+  // Cross-origin payment / card-processing widgets: never auto-submit a
+  // payment-adjacent form.
+  const paymentFrame = page.locator(
+    [
+      'iframe[src*="stripe.com" i]',
+      'iframe[src*="js.stripe" i]',
+      'iframe[name*="__privateStripeFrame" i]',
+      'iframe[src*="paypal.com" i]',
+      'iframe[src*="paypalobjects" i]',
+      'iframe[src*="braintreegateway" i]',
+      'iframe[src*="squareup.com" i]',
+      'iframe[src*="squarecdn" i]',
+      'iframe[src*="adyen.com" i]',
+      'iframe[src*="checkout.com" i]',
+      'iframe[src*="recurly.com" i]',
+      'iframe[title*="secure payment" i]',
+      'iframe[title*="card number" i]',
+      'iframe[title*="credit card" i]',
+    ].join(", "),
+  );
+  if ((await paymentFrame.count()) > 0) {
+    return { category: "HUMAN_CONSENT", reason: "Payment / card-processing widget present — operator must review before any submission" };
+  }
+
   const bodyText = (await page.locator("body").innerText({ timeout: 3_000 }).catch(() => "")).slice(0, 30_000).toLowerCase();
   if (/captcha|i am not a robot|i'm not a robot|verify you are human|checking your browser/.test(bodyText)) {
     return { category: "CAPTCHA", reason: "Human or anti-bot verification detected" };
@@ -155,6 +179,16 @@ async function detectPageBlocker(
     if ((field.type === "checkbox" || field.type === "radio") && (field.required || field.invalid)) {
       return { category: "HUMAN_CONSENT", reason: "A required consent or choice needs operator review" };
     }
+  }
+
+  // Fallback payment/billing context detection (card FIELDS are already caught
+  // above by restricted-field detection). A strong combined signal only.
+  const strongPayment =
+    /\b(credit[ -]?card number|card verification (code|number)|payment method|billing information|complete (your )?payment|proceed to (payment|checkout))\b/.test(
+      bodyText,
+    ) || (/\bcard number\b/.test(bodyText) && /\b(cvv|cvc|expir)\b/.test(bodyText));
+  if (strongPayment) {
+    return { category: "HUMAN_CONSENT", reason: "Payment / billing context detected — operator must review before any submission" };
   }
   return undefined;
 }
@@ -203,18 +237,48 @@ async function findNavigationAction(
 ): Promise<NavigationAction | undefined> {
   const controls = page.locator('button, input[type="submit"], input[type="button"]');
   const count = await controls.count();
-  const candidates: Array<{ index: number; text: string; insideForm: boolean; formText: string; disabled: boolean }> = [];
+  const candidates: Array<{
+    index: number;
+    text: string;
+    insideForm: boolean;
+    formText: string;
+    scopeText: string;
+    disabled: boolean;
+  }> = [];
   for (let index = 0; index < count; index += 1) {
     const control = controls.nth(index);
     if (!(await control.isVisible().catch(() => false))) continue;
     candidates.push(
-      await control.evaluate((element, controlIndex) => ({
-        index: controlIndex,
-        text: ((element as HTMLInputElement).value || element.textContent || element.getAttribute("aria-label") || "").trim(),
-        insideForm: Boolean(element.closest("form")),
-        formText: (element.closest("form")?.innerText ?? "").slice(0, 3_000),
-        disabled: (element as HTMLButtonElement).disabled || element.getAttribute("aria-disabled") === "true",
-      }), index),
+      await control.evaluate((element, controlIndex) => {
+        const form = element.closest("form");
+        // Scope text = the form's own text plus the nearest heading that labels
+        // it (a heading immediately before the form, or the enclosing section's
+        // heading). This keeps registration intent local to the form without
+        // trusting arbitrary whole-page copy.
+        let headingText = "";
+        if (form) {
+          let node: Element | null = form.previousElementSibling;
+          for (let hop = 0; node && hop < 3; hop += 1) {
+            if (/^H[1-4]$/.test(node.tagName)) {
+              headingText = node.textContent ?? "";
+              break;
+            }
+            node = node.previousElementSibling;
+          }
+          if (!headingText) {
+            const section = form.closest("section, main, article, [role='main']");
+            headingText = section?.querySelector("h1, h2, h3")?.textContent ?? "";
+          }
+        }
+        return {
+          index: controlIndex,
+          text: ((element as HTMLInputElement).value || element.textContent || element.getAttribute("aria-label") || "").trim(),
+          insideForm: Boolean(form),
+          formText: (form?.innerText ?? "").slice(0, 3_000),
+          scopeText: `${headingText} ${form?.innerText ?? ""}`.slice(0, 3_000),
+          disabled: (element as HTMLButtonElement).disabled || element.getAttribute("aria-disabled") === "true",
+        };
+      }, index),
     );
   }
 
@@ -237,6 +301,19 @@ async function findNavigationAction(
     if (accountFlow !== "registration") return { kind: "ambiguous", locator: controls.nth(candidate.index), label, confidence: 35 };
     if (/\b(by (clicking|selecting|creating|registering|signing up)|i agree|consent to|agree to the terms)\b/i.test(candidate.formText)) {
       return { kind: "ambiguous", locator: controls.nth(candidate.index), label, confidence: 35 };
+    }
+    // Form-scoped registration intent. A strong label ("register", "create
+    // account", "sign up", "create profile") is self-evidencing. A generic label
+    // ("submit", "finish", "join") must have account-creation evidence in the
+    // SAME form's own text — otherwise it is a newsletter / contact / generic
+    // form and must not auto-submit.
+    const strongLabel = /^(register( now)?|create( my| an)? account|complete registration|sign up|create profile)$/i.test(label);
+    const formRegistrationEvidence =
+      /\b(create (an? )?account|creating (an? )?account|sign[ -]?up|signing up|register|registration|new account|create (your )?profile|become a member|set up (your )?account)\b/i.test(
+        candidate.scopeText,
+      );
+    if (!strongLabel && !formRegistrationEvidence) {
+      return { kind: "ambiguous", locator: controls.nth(candidate.index), label, confidence: 40 };
     }
     if (recognizedFieldCount >= 1) return { kind: "final", locator: controls.nth(candidate.index), label, confidence: 95 };
   }
@@ -444,4 +521,53 @@ export async function currentPageState(page: Page): Promise<string> {
     return `${location.origin}${location.pathname}|${document.title}|${controls.join("|")}`;
   });
   return pageStateHash(state);
+}
+
+export interface FinalSubmitRevalidation {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * Re-read the LIVE form state immediately before the durable final-submit
+ * boundary. The earlier scan's values are not trusted here: a password manager
+ * or the operator may have changed a field, a blocker/iframe may have appeared,
+ * and required fields may have been cleared. Any conflict blocks submission.
+ */
+export async function revalidateFinalSubmit(
+  page: Page,
+  profile: PersonProfile,
+  registry: FieldRegistry = getDefaultFieldRegistry(),
+): Promise<FinalSubmitRevalidation> {
+  const fields = await collectFields(page);
+  const accountFlow = await classifyAccountFlow(page);
+
+  const blocker = await detectPageBlocker(page, fields, profile, accountFlow);
+  if (blocker) return { ok: false, reason: `Blocker appeared before submit: ${blocker.reason}` };
+
+  if (await visibleValidationErrors(page)) return { ok: false, reason: "Visible validation errors appeared before submit" };
+
+  for (const descriptor of fields) {
+    if (descriptor.disabled || descriptor.readOnly) continue;
+    if (descriptor.type === "checkbox" || descriptor.type === "radio" || descriptor.type === "file") continue;
+    const match = matchProfileField(descriptor, { registry, accountFlow });
+    if (!match) {
+      if ((descriptor.required || descriptor.invalid) && !descriptor.currentValue.trim()) {
+        return { ok: false, reason: `Required field "${descriptor.name || descriptor.label || "unnamed"}" is empty before submit` };
+      }
+      continue;
+    }
+    const expected = profileValue(profile, match, descriptor);
+    const current = descriptor.currentValue.trim();
+    if (!current) {
+      if (descriptor.required && expected) {
+        return { ok: false, reason: `Recognised field ${match.field} was cleared before submit` };
+      }
+      continue;
+    }
+    if (expected && prefilledValueConflicts(match.field, current, expected)) {
+      return { ok: false, reason: `Field ${match.field} no longer matches the active client just before submit` };
+    }
+  }
+  return { ok: true };
 }

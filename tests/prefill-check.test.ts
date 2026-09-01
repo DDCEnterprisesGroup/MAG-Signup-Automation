@@ -26,10 +26,15 @@ test("state treats abbreviations and full names as equivalent", () => {
   assert.equal(prefilledValueConflicts("state", "California", "FL"), true);
 });
 
-test("names conflict only on a clear mismatch, not on formatting or partials", () => {
+test("names match only on equality or a full whitespace-token subset — never an arbitrary substring", () => {
   assert.equal(prefilledValueConflicts("firstName", "Jon", "Jon"), false);
   assert.equal(prefilledValueConflicts("lastName", "O'Brien", "O Brien"), false);
-  assert.equal(prefilledValueConflicts("firstName", "Alexander", "Alex"), false); // one contains the other
+  // Full-token subset is safe: "Jon" is one of the tokens of "Jon Michael".
+  assert.equal(prefilledValueConflicts("firstName", "Jon", "Jon Michael"), false);
+  assert.equal(prefilledValueConflicts("firstName", "Jon Michael", "Jon"), false);
+  // Arbitrary substring is NOT safe identity equivalence: "Alex" vs "Alexander"
+  // could be a different person -> conflict.
+  assert.equal(prefilledValueConflicts("firstName", "Alexander", "Alex"), true);
   assert.equal(prefilledValueConflicts("lastName", "Smith", "Jones"), true);
 });
 

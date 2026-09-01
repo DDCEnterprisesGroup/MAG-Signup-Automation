@@ -4,6 +4,7 @@ import type { AppConfig } from "../config.js";
 import { loadConfig } from "../config.js";
 import { WorkbookStore } from "../excel/workbook-store.js";
 import { ensureFieldRegistry } from "../fields/field-registry.js";
+import { OPERATOR_RESUME_MARKER } from "../types/models.js";
 import { appendNote } from "../utils/text.js";
 import { buildOperationsStatus } from "./status.js";
 
@@ -59,6 +60,12 @@ async function detectLockState(lockPath: string): Promise<"free" | "stale" | "he
 export interface PreflightOptions {
   /** True when the worker will start next (mag start / restart); false for a standalone `mag preflight`. */
   startingWorker?: boolean;
+  /**
+   * Present for `mag run` / `mag start --person --site`. A targeted run gets the
+   * SAME integrity gate as a full start, plus pair-specific submission-safety
+   * checks. It is never a bypass.
+   */
+  targeted?: { personId: string; siteId: string };
 }
 
 export async function runPreflight(
@@ -249,25 +256,69 @@ export async function runPreflight(
     }
 
     // Orphaned "IN PROGRESS" from a prior crash: no live worker holds the lock at
-    // this point. Retrying could double-submit, so route to human review rather
-    // than guess or auto-retry.
+    // this point. A crash BETWEEN the final-submit checkpoint and the click is
+    // impossible now (the checkpoint writes AWAITING CONFIRMATION first), so a
+    // stale IN PROGRESS never submitted — route it to human re-check.
     const now = Date.now();
     for (const attempt of workbook.getAttempts()) {
       if (attempt.status !== "IN PROGRESS") continue;
       const age = now - Date.parse(attempt.attemptedAt);
       if (!Number.isFinite(age) || age <= STALE_IN_PROGRESS_MS) continue;
+      const mightHaveSubmitted = /final submit|token=|awaiting confirmation|submission may occur/i.test(attempt.notes);
       await workbook.updateAttempt(attempt, {
-        status: "WAITING FOR HUMAN",
-        errorType: "AUTOMATION_ERROR",
-        retryEligible: "YES",
+        status: mightHaveSubmitted ? "AWAITING CONFIRMATION" : "WAITING FOR HUMAN",
+        errorType: "HUMAN_CONSENT",
+        retryEligible: mightHaveSubmitted ? "NO" : "YES",
         notes: appendNote(
           attempt.notes,
-          "Worker ended mid-attempt; operator must confirm whether the external submission completed before any retry.",
+          mightHaveSubmitted
+            ? "Worker ended around the final submit; a submit may have been sent. Parked — `mag handoff resume/confirm/skip` required."
+            : "Worker ended mid-attempt (pre-submit); re-check with `mag handoff resume`.",
         ),
       });
       const person = workbook.getPeople().find((candidate) => candidate.id === attempt.personId);
       if (person) await workbook.updatePerson(person, "WAITING FOR HUMAN", attempt.siteId);
-      safeRepairs.push(`Routed stale in-progress ${attempt.personId}/${attempt.siteId} to human review.`);
+      safeRepairs.push(
+        `Routed stale in-progress ${attempt.personId}/${attempt.siteId} to ${mightHaveSubmitted ? "AWAITING CONFIRMATION" : "human review"}.`,
+      );
+    }
+
+    // Report (do not block on) attempts safely parked as submission-uncertain.
+    const parked = workbook
+      .getAttempts()
+      .filter((attempt) => attempt.status === "AWAITING CONFIRMATION" && !attempt.notes.includes(OPERATOR_RESUME_MARKER));
+    if (parked.length > 0) {
+      step("Submission-uncertain...", `${parked.length} parked`, "resolve with `mag handoffs`");
+    }
+
+    // Targeted-run pair-specific submission safety. NEVER a bypass.
+    if (options.targeted) {
+      const { personId, siteId } = options.targeted;
+      const pairAttempts = workbook
+        .getAttempts()
+        .filter((attempt) => attempt.personId === personId && attempt.siteId === siteId);
+      const latest = pairAttempts.at(-1);
+      if (!workbook.getPeople().some((person) => person.id === personId)) {
+        critical.push(`Targeted run: Person ID ${personId} is not in the workbook.`);
+      }
+      if (!workbook.getSitesIncludingReserved().some((site) => site.id === siteId)) {
+        critical.push(`Targeted run: Site ID ${siteId} is not in the workbook.`);
+      }
+      if (latest?.status === "COMPLETED") {
+        critical.push(`Targeted run: ${personId}/${siteId} is already COMPLETED — refusing to re-run.`);
+        actions.push("Nothing to do; this pair is finished.");
+      } else if (latest?.status === "SITE INVALID") {
+        critical.push(`Targeted run: ${personId}/${siteId} is SITE INVALID.`);
+      } else if (latest?.status === "AWAITING CONFIRMATION" && !latest.notes.includes(OPERATOR_RESUME_MARKER)) {
+        critical.push(`Targeted run: ${personId}/${siteId} is submission-uncertain (a submit may have been sent).`);
+        actions.push(
+          `Run \`mag handoff resume ${personId} ${siteId}\` (re-check), \`mag handoff confirm ${personId} ${siteId}\` (it went through), or \`mag handoff skip ${personId} ${siteId}\`.`,
+        );
+      }
+      const dupIds = pairAttempts.map((attempt) => attempt.attemptId).filter(Boolean);
+      if (new Set(dupIds).size !== dupIds.length) {
+        critical.push(`Targeted run: ${personId}/${siteId} has duplicate ATTEMPT IDs — completion state is ambiguous.`);
+      }
     }
 
     return finish();

@@ -17,11 +17,11 @@ export function parseTargetedRunArgs(args: readonly string[]): TargetedRunArgs {
   return { personId, siteId, rest: args.includes("--dry-run") ? ["--dry-run"] : [] };
 }
 
-export function parseHandoffArgs(args: readonly string[]): { action: "resume" | "skip"; personId: string; siteId: string } {
+export function parseHandoffArgs(args: readonly string[]): { action: "resume" | "skip" | "confirm"; personId: string; siteId: string } {
   const [action, person, site, ...extra] = args;
-  if (!["resume", "skip"].includes(action ?? "") || !person || !site || extra.length ||
+  if (!["resume", "skip", "confirm"].includes(action ?? "") || !person || !site || extra.length ||
       !/^P\d{4,}$/i.test(person) || !/^S\d{4,}$/i.test(site)) {
-    throw new Error("Usage: mag handoff <resume|skip> <personId> <siteId>");
+    throw new Error("Usage: mag handoff <resume|skip|confirm> <personId> <siteId>");
   }
-  return { action: action as "resume" | "skip", personId: person.toUpperCase(), siteId: site.toUpperCase() };
+  return { action: action as "resume" | "skip" | "confirm", personId: person.toUpperCase(), siteId: site.toUpperCase() };
 }

@@ -15,9 +15,17 @@ export interface NavigationResult {
   timedOutButUsable: boolean;
 }
 
+export interface NavigationWatch {
+  /** True once the page began navigating / a new document started loading since arm(). */
+  navigated(): boolean;
+  disarm(): void;
+}
+
 export class BrowserSession {
   private context: BrowserContext | undefined;
   private pageValue: Page | undefined;
+  /** Set true only while a signup-entry control is being clicked (may open a tab). */
+  private expectingEntryPopup = false;
 
   constructor(
     private readonly config: AppConfig,
@@ -27,7 +35,39 @@ export class BrowserSession {
 
   get page(): Page {
     if (!this.pageValue) throw new Error("Browser session is not open.");
+    if (this.pageValue.isClosed()) {
+      // The active workflow page was closed. Fall back to another open page in
+      // the context rather than blindly operating on a dead handle.
+      const alive = this.context?.pages().find((page) => !page.isClosed());
+      if (!alive) throw new Error("Browser page was closed and no live page remains in the session.");
+      this.pageValue = alive;
+    }
     return this.pageValue;
+  }
+
+  /**
+   * Watch the active page for the start of a navigation (e.g. a manual form
+   * submit) so the engine can avoid firing a duplicate click.
+   */
+  armNavigationWatch(): NavigationWatch {
+    const page = this.page;
+    let navigated = false;
+    const startUrl = page.url();
+    const onFrameNav = (frame: import("playwright").Frame): void => {
+      if (frame === page.mainFrame()) navigated = true;
+    };
+    const onRequest = (request: import("playwright").Request): void => {
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigated = true;
+    };
+    page.on("framenavigated", onFrameNav);
+    page.on("request", onRequest);
+    return {
+      navigated: () => navigated || page.isClosed() || page.url() !== startUrl,
+      disarm: () => {
+        page.off("framenavigated", onFrameNav);
+        page.off("request", onRequest);
+      },
+    };
   }
 
   async open(): Promise<void> {
@@ -56,7 +96,19 @@ export class BrowserSession {
     this.context.setDefaultTimeout(Math.min(this.config.navigationTimeoutMs, 15_000));
     this.pageValue = this.context.pages()[0] ?? (await this.context.newPage());
     this.context.on("page", (page) => {
-      this.pageValue = page;
+      // Only adopt a newly opened tab as the workflow page when we are in the
+      // middle of clicking a signup-entry control and the tab is same-site.
+      // A stray ad/marketing popup must never hijack the workflow.
+      if (!this.expectingEntryPopup) return;
+      try {
+        const current = this.pageValue ? new URL(this.pageValue.url()).hostname.replace(/^www\./, "") : "";
+        const opened = new URL(page.url() || "about:blank").hostname.replace(/^www\./, "");
+        if (opened === "" || opened === current || opened.endsWith(`.${current}`) || current.endsWith(`.${opened}`)) {
+          this.pageValue = page;
+        }
+      } catch {
+        // Unparseable URL on the new tab: do not adopt.
+      }
     });
   }
 
@@ -105,13 +157,20 @@ export class BrowserSession {
     throw lastError;
   }
 
-  async clickAndSettle(locator: import("playwright").Locator): Promise<void> {
+  async clickAndSettle(locator: import("playwright").Locator, options: { entryControl?: boolean } = {}): Promise<void> {
     const priorPage = this.pageValue;
-    await locator.click({ timeout: 10_000 });
-    // A signup entry control may open a new tab. The context listener makes it
-    // the active workflow page; otherwise continue on the original page.
-    if (this.pageValue === priorPage) await this.page.waitForLoadState("domcontentloaded", { timeout: Math.min(10_000, this.config.navigationTimeoutMs) }).catch(() => undefined);
-    await this.page.waitForTimeout(600);
+    this.expectingEntryPopup = Boolean(options.entryControl);
+    try {
+      await locator.click({ timeout: 10_000 });
+      // A signup entry control may open a new tab. The context listener makes it
+      // the active workflow page; otherwise continue on the original page.
+      if (this.pageValue === priorPage) {
+        await this.page.waitForLoadState("domcontentloaded", { timeout: Math.min(10_000, this.config.navigationTimeoutMs) }).catch(() => undefined);
+      }
+      await this.page.waitForTimeout(600);
+    } finally {
+      this.expectingEntryPopup = false;
+    }
   }
 
   async screenshotIfSafe(site: Site, step: number, safe: boolean, category: ErrorCategory): Promise<string | undefined> {

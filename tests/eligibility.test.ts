@@ -104,6 +104,22 @@ test("operator deferrals remain retryable across runs but are bounded", () => {
   );
 });
 
+test("AWAITING CONFIRMATION is quarantined until an explicit operator release marker", () => {
+  assert.equal(isSiteProcessable({ latest: attempt("AWAITING CONFIRMATION"), attemptCount: 1, deferralCount: 0 }, config), false);
+  assert.equal(
+    isSiteProcessable(
+      { latest: attempt("AWAITING CONFIRMATION", { notes: "…; Operator authorized resume 2026-08-31 re-check" }), attemptCount: 1, deferralCount: 0 },
+      config,
+    ),
+    true,
+  );
+  // retryEligible is irrelevant — only the marker releases it.
+  assert.equal(
+    isSiteProcessable({ latest: attempt("AWAITING CONFIRMATION", { retryEligible: "YES" }), attemptCount: 9, deferralCount: 0 }, config),
+    false,
+  );
+});
+
 test("a deferred site is not re-attempted within the same pass", () => {
   assert.equal(isDeferredForThisPass(attempt("OPERATOR_DEFERRED")), true);
   assert.equal(isDeferredForThisPass(attempt("TEMP FAILURE")), false);

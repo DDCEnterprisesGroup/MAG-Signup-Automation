@@ -42,6 +42,11 @@ validate_targeted() {
 run_targeted() {
   validate_targeted "$@" || return $?
   if is_running; then echo "MAG is already running; stop it before a targeted run." >&2; return 1; fi
+  # A targeted run is NOT a safety bypass: same submission/duplicate integrity
+  # gate as `mag start`, scoped to the exact pair.
+  if ! ( cd "$PROJECT_ROOT" && npm run --silent preflight -- --targeted --person "$person_id" --site "$site_id" ); then
+    return 1
+  fi
   echo "Starting targeted MAG run for ${person_id} / ${site_id}."
   exec node "$PROJECT_ROOT/scripts/supervise.mjs" "$PID_FILE" "$PROJECT_ROOT" "$@"
 }
@@ -63,7 +68,7 @@ help_text() {
     "  mag preflight    Run the startup integrity gate without starting the worker" \
     "  mag run --person P0001 --site S0001  Run exactly one person/site" \
     "  mag handoffs     List current human handoffs" \
-    "  mag handoff resume|skip P0001 S0001  Control exactly one handoff" \
+    "  mag handoff resume|skip|confirm P0001 S0001  Control one handoff / submission-uncertain attempt" \
     "  mag dashboard    Show private-safe JSON status" "  mag help         Show this help"
 }
 
@@ -89,13 +94,14 @@ case "$command" in
   handoffs) shift; cd "$PROJECT_ROOT"; exec npm run handoffs -- "$@" ;;
   handoff)
     shift
-    [ "$#" -eq 3 ] || { echo "Usage: mag handoff <resume|skip> <personId> <siteId>" >&2; exit 2; }
+    [ "$#" -eq 3 ] || { echo "Usage: mag handoff <resume|skip|confirm> <personId> <siteId>" >&2; exit 2; }
     action=$1; person=$2; site=$3
     case "$action" in resume)
-      cd "$PROJECT_ROOT"; npm run handoffs -- resume "$person" "$site" >/dev/null
+      cd "$PROJECT_ROOT"; npm run handoffs -- resume "$person" "$site" || exit $?
       run_targeted --person "$person" --site "$site" ;;
       skip) cd "$PROJECT_ROOT"; exec npm run handoffs -- skip "$person" "$site" ;;
-      *) echo "Usage: mag handoff <resume|skip> <personId> <siteId>" >&2; exit 2 ;;
+      confirm) cd "$PROJECT_ROOT"; exec npm run handoffs -- confirm "$person" "$site" ;;
+      *) echo "Usage: mag handoff <resume|skip|confirm> <personId> <siteId>" >&2; exit 2 ;;
     esac
     ;;
   help|-h|--help) help_text ;;

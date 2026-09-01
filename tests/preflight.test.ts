@@ -194,7 +194,7 @@ test("a live workbook lock held by this process blocks startup", async () => {
   }
 });
 
-test("a stale in-progress attempt is routed to human review as a safe repair, not blocked or retried", async () => {
+test("a stale pre-submit in-progress attempt is routed to human review, not blocked or retried", async () => {
   const { config, workbookPath, cleanup } = await setup({
     sites: [SITE("S0001", "https://example.invalid/a")],
     people: [PERSON("P0001", "IN PROGRESS")],
@@ -209,7 +209,32 @@ test("a stale in-progress attempt is routed to human review as a safe repair, no
     try {
       const attempt = store.getLatestAttempt("P0001", "S0001");
       assert.equal(attempt?.status, "WAITING FOR HUMAN");
-      assert.match(attempt?.notes ?? "", /confirm whether the external submission completed/);
+      assert.match(attempt?.notes ?? "", /pre-submit/i);
+    } finally {
+      await store.release();
+    }
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a stale in-progress attempt near the final submit is parked as AWAITING CONFIRMATION", async () => {
+  const { config, workbookPath, cleanup } = await setup({
+    sites: [SITE("S0001", "https://example.invalid/a")],
+    people: [PERSON("P0001", "IN PROGRESS")],
+    results: [
+      attemptRow("A-STALE", "P0001", "S0001", "IN PROGRESS", OLD, "NO", 'Sending final submit "Sign Up" at https://example.invalid/a; token=A-STALE:1'),
+    ],
+  });
+  try {
+    const result = await runPreflight(config);
+    assert.equal(result.blocked, false);
+    const store = new WorkbookStore(workbookPath);
+    await store.open();
+    try {
+      const attempt = store.getLatestAttempt("P0001", "S0001");
+      assert.equal(attempt?.status, "AWAITING CONFIRMATION");
+      assert.equal(attempt?.retryEligible, "NO");
     } finally {
       await store.release();
     }
@@ -234,6 +259,119 @@ test("a recent in-progress attempt (fresh crash window) is left untouched", asyn
     } finally {
       await store.release();
     }
+  } finally {
+    await cleanup();
+  }
+});
+
+// TEST E (targeted half) — `mag run --person P --site S` / `preflight --targeted`
+// runs the SAME safety checks as `mag start`; it is never a bypass.
+test("targeted preflight refuses an already-COMPLETED pair", async () => {
+  const { config, cleanup } = await setup({
+    sites: [SITE("S0001", "https://example.invalid/a")],
+    people: [PERSON("P0001", "COMPLETED")],
+    results: [attemptRow("A-DONE", "P0001", "S0001", "COMPLETED")],
+  });
+  try {
+    const result = await runPreflight(config, () => undefined, { targeted: { personId: "P0001", siteId: "S0001" } });
+    assert.equal(result.blocked, true);
+    assert.ok(result.critical.some((line) => /already COMPLETED|refusing to re-run/i.test(line)));
+  } finally {
+    await cleanup();
+  }
+});
+
+test("targeted preflight refuses an unreleased submission-uncertain pair", async () => {
+  const { config, cleanup } = await setup({
+    sites: [SITE("S0001", "https://example.invalid/a")],
+    people: [PERSON("P0001", "WAITING FOR HUMAN")],
+    results: [
+      attemptRow(
+        "A-UNC",
+        "P0001",
+        "S0001",
+        "AWAITING CONFIRMATION",
+        NOW,
+        "NO",
+        'Sending final submit "Sign Up" at https://example.invalid/x; token=A-UNC:1. Submission may occur; outcome unresolved.',
+      ),
+    ],
+  });
+  try {
+    const result = await runPreflight(config, () => undefined, { targeted: { personId: "P0001", siteId: "S0001" } });
+    assert.equal(result.blocked, true);
+    assert.ok(result.critical.some((line) => /submission-uncertain|submit may have been sent/i.test(line)));
+    assert.ok(result.actions.some((line) => /mag handoff (resume|confirm|skip)/i.test(line)));
+  } finally {
+    await cleanup();
+  }
+});
+
+test("targeted preflight refuses a SITE INVALID pair", async () => {
+  const { config, cleanup } = await setup({
+    sites: [SITE("S0001", "https://example.invalid/a")],
+    people: [PERSON("P0001", "PENDING")],
+    results: [attemptRow("A-INV", "P0001", "S0001", "SITE INVALID")],
+  });
+  try {
+    const result = await runPreflight(config, () => undefined, { targeted: { personId: "P0001", siteId: "S0001" } });
+    assert.equal(result.blocked, true);
+    assert.ok(result.critical.some((line) => /SITE INVALID/i.test(line)));
+  } finally {
+    await cleanup();
+  }
+});
+
+test("targeted preflight refuses a pair with duplicate ATTEMPT IDs", async () => {
+  const { config, cleanup } = await setup({
+    sites: [SITE("S0001", "https://example.invalid/a")],
+    people: [PERSON("P0001", "PENDING")],
+    results: [
+      attemptRow("A-DUP", "P0001", "S0001", "FAILED", OLD, "YES"),
+      attemptRow("A-DUP", "P0001", "S0001", "IN PROGRESS", NOW, "YES"),
+    ],
+  });
+  try {
+    const result = await runPreflight(config, () => undefined, { targeted: { personId: "P0001", siteId: "S0001" } });
+    assert.equal(result.blocked, true);
+    assert.ok(result.critical.some((line) => /duplicate ATTEMPT ID/i.test(line)));
+  } finally {
+    await cleanup();
+  }
+});
+
+test("targeted preflight allows a clean pending pair", async () => {
+  const { config, cleanup } = await setup({
+    sites: [SITE("S0001", "https://example.invalid/a")],
+    people: [PERSON("P0001", "PENDING")],
+  });
+  try {
+    const result = await runPreflight(config, () => undefined, { targeted: { personId: "P0001", siteId: "S0001" } });
+    assert.equal(result.blocked, false);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("targeted preflight allows an operator-released submission-uncertain pair", async () => {
+  const { config, cleanup } = await setup({
+    sites: [SITE("S0001", "https://example.invalid/a")],
+    people: [PERSON("P0001", "WAITING FOR HUMAN")],
+    results: [
+      attemptRow(
+        "A-REL",
+        "P0001",
+        "S0001",
+        "AWAITING CONFIRMATION",
+        NOW,
+        "NO",
+        'Sending final submit "Sign Up"; token=A-REL:1. Operator authorized resume re-check confirmation URL only',
+      ),
+    ],
+  });
+  try {
+    const result = await runPreflight(config, () => undefined, { targeted: { personId: "P0001", siteId: "S0001" } });
+    assert.equal(result.blocked, false);
   } finally {
     await cleanup();
   }

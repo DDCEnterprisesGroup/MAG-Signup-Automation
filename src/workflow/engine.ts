@@ -3,7 +3,7 @@ import type { AppConfig } from "../config.js";
 import type { FieldRegistry } from "../fields/field-registry.js";
 import { BrowserSession, classifyNavigationError } from "../browser/browser-session.js";
 import type { WorkbookStore } from "../excel/workbook-store.js";
-import { currentPageState, scanAndFillPage } from "../forms/form-handler.js";
+import { currentPageState, revalidateFinalSubmit, scanAndFillPage } from "../forms/form-handler.js";
 import { getDefaultFieldRegistry } from "../forms/field-mapper.js";
 import { hasIdentityAnchor } from "../forms/prefill-check.js";
 import type { Logger } from "../logging/logger.js";
@@ -16,7 +16,7 @@ import type {
   Site,
   SiteIssue,
 } from "../types/models.js";
-import { SiteControlSignal, StopRunError } from "../types/models.js";
+import { OPERATOR_RESUME_MARKER, SiteControlSignal, StopRunError } from "../types/models.js";
 import { normalizeUrl, safeUrl, sameSiteHost } from "../utils/text.js";
 import { eligibilityConfig, isSiteProcessable } from "./eligibility.js";
 import { waitForOperator, type OperatorHandoffDecision } from "./human-handoff.js";
@@ -201,8 +201,14 @@ export class WorkflowEngine {
     const remaining = sites.filter((site) => this.shouldProcess(person, site));
     if (remaining.length === 0) {
       await this.workbook.updatePersonSummary(person);
-      await this.workbook.updatePerson(person, "COMPLETED");
-      console.log(`${person.id} | No remaining processable sites | COMPLETED`);
+      // A pair parked for human review (submission-uncertain or an unresolved
+      // handoff) is not "done" — surface it, don't mark the person COMPLETED.
+      const held = sites.some((site) => {
+        const latest = this.workbook.getLatestAttempt(person.id, site.id);
+        return latest?.status === "AWAITING CONFIRMATION" || latest?.status === "WAITING FOR HUMAN";
+      });
+      await this.workbook.updatePerson(person, held ? "WAITING FOR HUMAN" : "COMPLETED");
+      console.log(`${person.id} | No remaining processable sites | ${held ? "WAITING FOR HUMAN" : "COMPLETED"}`);
       return;
     }
 
@@ -251,7 +257,9 @@ export class WorkflowEngine {
       await this.workbook.updatePersonSummary(person);
       const latest = sites.map((site) => this.workbook.getLatestAttempt(person.id, site.id));
       const pendingRetry = latest.some((attempt) => !attempt || (attempt.retryEligible === "YES" && attempt.status !== "COMPLETED"));
-      const waiting = latest.some((attempt) => attempt?.status === "WAITING FOR HUMAN");
+      const waiting = latest.some(
+        (attempt) => attempt?.status === "WAITING FOR HUMAN" || attempt?.status === "AWAITING CONFIRMATION",
+      );
       const finalStatus = waiting ? "WAITING FOR HUMAN" : pendingRetry ? "PENDING" : "COMPLETED";
       await this.workbook.updatePerson(person, finalStatus);
       this.control.progress(`${person.id} | Current site set finished | ${finalStatus}`);
@@ -328,11 +336,14 @@ export class WorkflowEngine {
   }
 
   /**
-   * A final submit was already clicked this attempt and the operator (or a
-   * post-submit load failure) is now bailing out. Do NOT defer/retry from the
-   * top — that would re-navigate the entry URL and re-submit the same form.
-   * Record WAITING FOR HUMAN pinned to the post-submit page so the next run
-   * resumes there, re-checks the result, and never resubmits.
+   * A final submit may have been sent for this attempt and its outcome is not
+   * safely resolved. Record the durable, first-class AWAITING CONFIRMATION
+   * status (retryEligible NO), pinned to the current URL. This state is NEVER
+   * automatically processed — `mag start`, `mag restart`, the worker loop and
+   * targeted runs all leave it parked. It is released only by an explicit
+   * `mag handoff resume <person> <site>` (re-check the confirmation URL) or
+   * `mag handoff skip` (the signup went through). No fresh attempt, no return
+   * to the entry form.
    */
   private async markSubmittedUnconfirmed(
     person: PersonProfile,
@@ -341,17 +352,22 @@ export class WorkflowEngine {
     page: Page,
     reason: string,
   ): Promise<SiteOutcome> {
-    const url = safeUrl(page.url());
+    let url = "";
+    try {
+      url = safeUrl(page.url());
+    } catch {
+      url = safeUrl(attempt.lastUrl);
+    }
     await this.workbook.updateAttempt(attempt, {
-      status: "WAITING FOR HUMAN",
+      status: "AWAITING CONFIRMATION",
       formStep: Math.max(1, attempt.formStep),
-      lastUrl: url,
+      lastUrl: url || safeUrl(attempt.lastUrl),
       errorType: "HUMAN_CONSENT",
-      retryEligible: "YES",
+      retryEligible: "NO",
       notes:
-        `${reason} after a final submit was already clicked. The signup may already be complete; ` +
-        `the next run resumes at ${url} to re-check the result and does not resubmit. ` +
-        "Use `mag handoff skip` if the signup went through.",
+        `${reason}: a final submit may have been sent; outcome unresolved. Parked at ${url || attempt.lastUrl}. ` +
+        `Run \`mag handoff resume ${person.id} ${site.id}\` to re-check the confirmation URL, ` +
+        "or `mag handoff skip` if the signup went through. MAG will NOT resubmit.",
     });
     await this.workbook.updatePerson(person, "WAITING FOR HUMAN", site.id);
     await this.logger.event({
@@ -359,13 +375,13 @@ export class WorkflowEngine {
       siteId: site.id,
       url,
       pageStep: attempt.formStep,
-      action: "submitted_unconfirmed",
-      outcome: "WAITING FOR HUMAN",
+      action: "submission_uncertain",
+      outcome: "AWAITING CONFIRMATION",
       errorCategory: "HUMAN_CONSENT",
       message: reason,
     });
     this.control.countHandoff();
-    this.control.progress(`${person.id} | ${site.id} | WAITING FOR HUMAN | submit already sent — next run re-checks, will not resubmit`);
+    this.control.progress(`${person.id} | ${site.id} | AWAITING CONFIRMATION | submit may have been sent — parked, will not resubmit`);
     return "waiting";
   }
 
@@ -396,11 +412,12 @@ export class WorkflowEngine {
     progress: string,
   ): Promise<SiteOutcome> {
     let safeToScreenshot = false;
-    // True once a final "submit" control has been clicked this attempt (and it
-    // stays true across a resume). From that point a defer/retry/skip or a load
-    // failure must NOT restart the flow from the top — that resubmits — so it
-    // resumes at the post-submit page instead.
-    let submittedThisAttempt = /submit was already clicked|awaiting confirmation/i.test(attempt.notes);
+    // Durable "a final submit may have been sent for this attempt" flag. Source
+    // of truth is the TYPED attempt status (AWAITING CONFIRMATION), NOT a note.
+    // It also stays true for an attempt an operator explicitly released for a
+    // confirmation-URL re-check. From this point NO exit path may create a fresh
+    // attempt or return to the entry form automatically.
+    let submittedThisAttempt = attempt.status === "AWAITING CONFIRMATION" || attempt.notes.includes(OPERATOR_RESUME_MARKER);
     const targetUrl = attempt.formStep > 0 && attempt.lastUrl ? attempt.lastUrl : site.finalUrl || site.signupUrl;
     let finalUrl = targetUrl;
     try {
@@ -426,7 +443,13 @@ export class WorkflowEngine {
           errorCategory: "NETWORK_TIMEOUT",
         });
       }
+      // Post-submit invariant: once a submit may have been sent, re-navigating
+      // the confirmation URL and hitting an HTTP error / redirect / parked page
+      // is an UNCONFIRMED submission outcome — never a fresh failure/defer/invalid.
       const httpCategory = navigation.status === null ? undefined : navigationHttpCategory(navigation.status);
+      if (submittedThisAttempt && (httpCategory || (navigation.status !== null && navigation.status >= 400) || navigation.redirectCount > 10)) {
+        return await this.markSubmittedUnconfirmed(person, site, attempt, browser.page, `Post-submit navigation HTTP ${navigation.status ?? "error"}`);
+      }
       if (httpCategory === "HTTP_404") {
         return await this.markInvalid(site, attempt, httpCategory, finalUrl, `HTTP ${navigation.status ?? 404}`, navigation.status ?? "");
       }
@@ -443,12 +466,18 @@ export class WorkflowEngine {
         if (navigation.redirectCount > 10) return await this.markInvalid(site, attempt, "REDIRECT_LOOP", finalUrl, "Redirect limit exceeded");
         const legitimate = sameSiteHost(normalizedTarget, finalUrl) || (await hasSignupSignals(browser.page));
         if (!legitimate) {
+          if (submittedThisAttempt) {
+            return await this.markSubmittedUnconfirmed(person, site, attempt, browser.page, "Post-submit navigation left the site");
+          }
           return await this.markDeferred(person, site, attempt, "Cross-site redirect did not yet reach a recognizable signup page");
         }
         await this.workbook.recordSiteIssue(issueFor(site, "REDIRECT", "REDIRECTED", finalUrl, "Legitimate signup redirect followed"));
         await this.workbook.updateSite(site, "REDIRECTED", finalUrl, "Final signup URL updated after redirect");
       }
       if (await looksParkedOrClosed(browser.page)) {
+        if (submittedThisAttempt) {
+          return await this.markSubmittedUnconfirmed(person, site, attempt, browser.page, "Post-submit page looks parked/closed");
+        }
         return await this.markInvalid(site, attempt, "SIGNUP_NOT_FOUND", finalUrl, "Parked, suspended, or closed site detected");
       }
 
@@ -480,13 +509,18 @@ export class WorkflowEngine {
           automaticSteps = 0;
         }
         ledgerStep += 1;
+        // Once a submit may have been sent, the durable AWAITING CONFIRMATION
+        // status must NOT be downgraded to IN PROGRESS by the re-scan loop — a
+        // crash here must still land in the quarantine.
         await this.workbook.updateAttempt(attempt, {
-          status: "IN PROGRESS",
+          status: submittedThisAttempt ? "AWAITING CONFIRMATION" : "IN PROGRESS",
           formStep: ledgerStep,
           lastUrl: safeUrl(browser.page.url()),
-          errorType: "",
-          retryEligible: "YES",
-          notes: `Scanning page ${ledgerStep}`,
+          errorType: submittedThisAttempt ? "HUMAN_CONSENT" : "",
+          retryEligible: submittedThisAttempt ? "NO" : "YES",
+          notes: submittedThisAttempt
+            ? `Re-checking confirmation page ${ledgerStep} at ${safeUrl(browser.page.url())}`
+            : `Scanning page ${ledgerStep}`,
         });
         this.control.setStatus({ phase: `scanning page ${ledgerStep}`, attempt: `${automaticSteps + 1}` });
         this.control.progress(`${progress} | Scanning Page ${ledgerStep}`);
@@ -517,7 +551,40 @@ export class WorkflowEngine {
           });
         }
         if (scan.success) {
-          return await this.markCompleted(site, attempt, browser.page.url(), ledgerStep, progress, "Completion confirmation detected");
+          // Completion requires evidence tied to THIS attempt. A success page we
+          // reach without having sent a submit this attempt (stale session,
+          // pre-existing dashboard, marketing "thank you") is NOT proof — route
+          // to human confirmation instead of auto-completing.
+          if (!submittedThisAttempt) {
+            return await this.markSubmittedUnconfirmed(
+              person,
+              site,
+              attempt,
+              browser.page,
+              "Completion indicator present but MAG sent no submit this attempt",
+            );
+          }
+          return await this.markCompleted(site, attempt, browser.page.url(), ledgerStep, progress, "Completion confirmation detected after this attempt's submit");
+        }
+
+        // ===== ONE FINAL SUBMIT PER ATTEMPT — hard invariant =====
+        // Once this attempt has dispatched (or been operator-released to
+        // re-check) a final submit, the loop does exactly ONE confirmation pass:
+        // scan.success -> COMPLETED (handled just above); ANYTHING else -> park
+        // as AWAITING CONFIRMATION. It may never re-fill a form, re-enter the
+        // durable-submit boundary, click any control, defer, fail, or classify
+        // the site — regardless of the page's phase, action kind, HTTP state, or
+        // DOM. This closes the silent-navigation-failure resubmit hole
+        // (regression B: a submit whose response drops the socket leaves the
+        // browser on a re-submittable page).
+        if (submittedThisAttempt) {
+          return await this.markSubmittedUnconfirmed(
+            person,
+            site,
+            attempt,
+            browser.page,
+            `Post-submit re-check showed no completion evidence (phase=${scan.phase}, action=${scan.action?.kind ?? "none"})`,
+          );
         }
 
         // A browser click can race the asynchronous scan. Never apply a
@@ -563,13 +630,16 @@ export class WorkflowEngine {
             reason: `Final submission "${scan.action.label}" reached without a verified email or full-name field`,
           };
         }
-        if (!handoff && scan.action?.kind === "final" && submittedThisAttempt) {
+        if (scan.action?.kind === "final" && submittedThisAttempt) {
           // Resumed onto another submit control after a submit was already sent
-          // this attempt: never click it automatically — a human confirms.
-          handoff = {
-            category: "HUMAN_CONSENT",
-            reason: `A submit was already sent for this site; the second submit control "${scan.action.label}" needs human confirmation`,
-          };
+          // this attempt: never click it automatically — park it.
+          return await this.markSubmittedUnconfirmed(
+            person,
+            site,
+            attempt,
+            browser.page,
+            `Re-check landed on another submit control "${scan.action.label}"`,
+          );
         }
         if (!handoff && !scan.action && scan.phase !== "LANDING_OR_INTERMEDIATE") {
           if (scan.visibleFieldCount === 0 && scan.recognizedFieldCount === 0) {
@@ -669,26 +739,118 @@ export class WorkflowEngine {
           continue;
         }
         automaticSteps += 1;
+
+        if (scan.action.kind === "final") {
+          // ===== DURABLE FINAL-SUBMIT BOUNDARY =====
+          const submitUrl = safeUrl(browser.page.url());
+          // (#7) Arm the navigation watch FIRST so a manual submit that fires
+          // during revalidation is still caught.
+          const navWatch = browser.armNavigationWatch();
+
+          // (#6) Re-read the live form immediately before submitting. The prior
+          // scan's values are not trusted.
+          const revalidation = await revalidateFinalSubmit(browser.page, person, this.fieldRegistry);
+
+          // (#7) A manual submission already started (URL changed / nav began).
+          if (navWatch.navigated() || safeUrl(browser.page.url()) !== submitUrl) {
+            navWatch.disarm();
+            return await this.markSubmittedUnconfirmed(person, site, attempt, browser.page, "Manual submission detected before MAG's click");
+          }
+
+          if (!revalidation.ok) {
+            navWatch.disarm();
+            const decision = await this.handoff(
+              person,
+              site,
+              attempt,
+              { category: "HUMAN_CONSENT", reason: `Final-submit revalidation failed: ${revalidation.reason}` },
+              browser.page,
+            );
+            if (decision.kind === "completed") {
+              return await this.markCompleted(site, attempt, browser.page.url(), ledgerStep, progress, decision.reason);
+            }
+            repeatedStates.clear();
+            automaticSteps = 0;
+            continue;
+          }
+
+          // (#1) Persist the durable submission-uncertain state to disk BEFORE
+          // the external click. If this checkpoint throws, the exception
+          // propagates and the click is never issued.
+          const token = `${attempt.attemptId}:${Date.now()}`;
+          try {
+            await this.workbook.updateAttempt(attempt, {
+              status: "AWAITING CONFIRMATION",
+              formStep: ledgerStep,
+              lastUrl: submitUrl,
+              errorType: "HUMAN_CONSENT",
+              retryEligible: "NO",
+              notes: `Sending final submit "${scan.action.label}" at ${submitUrl}; token=${token}. Submission may occur; outcome unresolved.`,
+            });
+          } catch (checkpointError) {
+            navWatch.disarm();
+            throw new Error(
+              `Could not durably record submission intent for ${person.id}/${site.id}; NOT clicking submit. ${
+                checkpointError instanceof Error ? checkpointError.message : String(checkpointError)
+              }`,
+            );
+          }
+          submittedThisAttempt = true;
+          await this.workbook.updatePerson(person, "IN PROGRESS", site.id);
+          await this.logger.event({
+            personId: person.id,
+            siteId: site.id,
+            url: submitUrl,
+            pageStep: ledgerStep,
+            action: "final_submit_intent",
+            outcome: "AWAITING CONFIRMATION",
+            message: `token=${token} label="${scan.action.label}"`,
+          });
+
+          // (#7) Re-check the race after the (async) checkpoint write.
+          if (navWatch.navigated()) {
+            navWatch.disarm();
+            await this.logger.event({
+              personId: person.id,
+              siteId: site.id,
+              url: browser.page.url(),
+              pageStep: ledgerStep,
+              action: "final_submit_race_skip",
+              outcome: "manual navigation already started",
+            });
+          } else {
+            await this.logger.event({
+              personId: person.id,
+              siteId: site.id,
+              url: submitUrl,
+              pageStep: ledgerStep,
+              action: "click_final",
+              outcome: scan.action.label,
+            });
+            try {
+              await browser.clickAndSettle(scan.action.locator);
+            } finally {
+              navWatch.disarm();
+            }
+          }
+
+          await this.workbook.updateAttempt(attempt, {
+            formStep: ledgerStep + 1,
+            lastUrl: safeUrl(browser.page.url()),
+          });
+          // Loop continues: next iteration re-scans the confirmation page.
+          continue;
+        }
+
         await this.logger.event({
           personId: person.id,
           siteId: site.id,
           url: browser.page.url(),
           pageStep: ledgerStep,
-          action: scan.action.kind === "final" ? "click_final" : scan.action.kind === "signup" ? "click_signup_entry" : "click_next",
+          action: scan.action.kind === "signup" ? "click_signup_entry" : "click_next",
           outcome: scan.action.label,
         });
-        await browser.clickAndSettle(scan.action.locator);
-        if (scan.action.kind === "final") {
-          // Record that a submit was sent, pinned to the post-submit page, so any
-          // later bail-out (hotkey, stop, load failure) resumes here rather than
-          // resubmitting from the entry URL.
-          submittedThisAttempt = true;
-          await this.workbook.updateAttempt(attempt, {
-            formStep: ledgerStep + 1,
-            lastUrl: safeUrl(browser.page.url()),
-            notes: `Submitted "${scan.action.label}"; awaiting confirmation`,
-          });
-        }
+        await browser.clickAndSettle(scan.action.locator, { entryControl: scan.action.kind === "signup" });
       }
     } catch (error) {
       if (error instanceof StopRunError || error instanceof SiteControlSignal) throw error;

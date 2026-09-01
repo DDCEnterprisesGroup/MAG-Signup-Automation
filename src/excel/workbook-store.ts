@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, open, readFile, rename, rm, writeFile, type FileHandle } from "node:fs/promises";
+import { copyFile, mkdir, open, readFile, rename, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
 import type { FieldRegistry } from "../fields/field-registry.js";
@@ -17,6 +17,7 @@ import type {
   Site,
   SiteIssue,
 } from "../types/models.js";
+import { OPERATOR_RESUME_MARKER } from "../types/models.js";
 import { appendNote, normalizeUrl, safeUrl } from "../utils/text.js";
 import { siteRowClass } from "../operations/site-inventory.js";
 
@@ -99,6 +100,7 @@ const ATTEMPT_STATUS_SET = new Set<AttemptStatus>([
   "SITE INVALID",
   "TEMP FAILURE",
   "OPERATOR_DEFERRED",
+  "AWAITING CONFIRMATION",
 ]);
 
 type CellValue = string | number;
@@ -339,23 +341,51 @@ export class WorkbookStore {
   private async acquireLock(): Promise<void> {
     try {
       this.lockHandle = await open(this.lockPath, "wx");
+      // Publish identity BEFORE anything else so a racing worker that reads this
+      // lock sees a complete record, not an empty file.
+      await this.lockHandle.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+      await this.lockHandle.datasync().catch(() => undefined);
+      return;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "EEXIST") throw error;
-      let stale = false;
+    }
+
+    // The lock already exists. Decide whether it is stale.
+    let stale: boolean;
+    try {
+      const metadata = JSON.parse(await readFile(this.lockPath, "utf8")) as { pid?: number };
+      stale = !metadata.pid || !processExists(metadata.pid);
+    } catch {
+      // Unreadable / partial lock. It is ONLY stale if it is also old — a lock
+      // created microseconds ago by a racing worker may not have written its
+      // metadata yet, and must not be stolen. Grace window: 15 seconds.
+      let ageMs = 0;
       try {
-        const metadata = JSON.parse(await readFile(this.lockPath, "utf8")) as { pid?: number };
-        stale = !metadata.pid || !processExists(metadata.pid);
+        ageMs = Date.now() - (await stat(this.lockPath)).mtimeMs;
       } catch {
-        stale = true;
+        ageMs = Number.POSITIVE_INFINITY;
       }
-      if (!stale) {
+      stale = ageMs > 15_000;
+    }
+
+    if (!stale) {
+      throw new Error(`Workbook is already in use by another automation process (${this.lockPath}).`);
+    }
+
+    // Genuinely stale: remove it and re-create with O_EXCL. If two workers race
+    // to reclaim, O_EXCL lets exactly one win; the other fails cleanly.
+    await rm(this.lockPath, { force: true });
+    try {
+      this.lockHandle = await open(this.lockPath, "wx");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
         throw new Error(`Workbook is already in use by another automation process (${this.lockPath}).`);
       }
-      await rm(this.lockPath, { force: true });
-      this.lockHandle = await open(this.lockPath, "wx");
+      throw error;
     }
     await this.lockHandle.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+    await this.lockHandle.datasync().catch(() => undefined);
   }
 
   private async load(): Promise<void> {
@@ -833,6 +863,27 @@ export class WorkbookStore {
 
   async beginOrResumeAttempt(person: PersonProfile, site: Site, prior?: AttemptRecord): Promise<AttemptRecord> {
     const now = new Date().toISOString();
+
+    // A submission-uncertain attempt is only ever resumed IN PLACE (at its
+    // pinned confirmation URL, never a fresh attempt from the entry form) and
+    // only after an explicit `mag handoff resume`. The engine's eligibility gate
+    // guarantees we never get here otherwise, but re-assert it: a fresh attempt
+    // row must not be created for a pair whose latest attempt may have submitted.
+    if (prior && prior.status === "AWAITING CONFIRMATION") {
+      if (!prior.notes.includes(OPERATOR_RESUME_MARKER)) {
+        throw new Error(
+          `${person.id}/${site.id} is AWAITING CONFIRMATION (a submit may have been sent). ` +
+            `Run \`mag handoff resume ${person.id} ${site.id}\` to release it, or \`mag handoff skip\` if the signup went through.`,
+        );
+      }
+      prior.status = "IN PROGRESS";
+      prior.retryEligible = "YES";
+      prior.notes = appendNote(prior.notes, `Resumed at confirmation URL ${now}`);
+      this.writeAttempt(prior);
+      await this.checkpoint();
+      return prior;
+    }
+
     if (prior && (prior.status === "IN PROGRESS" || prior.status === "WAITING FOR HUMAN")) {
       prior.status = "IN PROGRESS";
       prior.retryEligible = "YES";

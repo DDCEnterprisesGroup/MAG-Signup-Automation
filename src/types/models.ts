@@ -6,7 +6,21 @@ export const ATTEMPT_STATUSES = [
   "SITE INVALID",
   "TEMP FAILURE",
   "OPERATOR_DEFERRED",
+  // Durable, first-class "a final external submit may have been sent for this
+  // attempt; its outcome is not yet safely resolved" state. Written to disk
+  // BEFORE the final click. It is NOT automatically processable: it is released
+  // only by an explicit `mag handoff resume <person> <site>`. This is the
+  // submission-duplicate-protection invariant — never a free-text note.
+  "AWAITING CONFIRMATION",
 ] as const;
+
+/** Explicit-operator-authorization marker recognised by eligibility + resume. */
+export const OPERATOR_RESUME_MARKER = "Operator authorized resume";
+
+/** Whether an attempt is in the durable submission-uncertain quarantine. */
+export function isSubmissionUncertain(status: AttemptStatus): boolean {
+  return status === "AWAITING CONFIRMATION";
+}
 
 export type AttemptStatus = (typeof ATTEMPT_STATUSES)[number];
 

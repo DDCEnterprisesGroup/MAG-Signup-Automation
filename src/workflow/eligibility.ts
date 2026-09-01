@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config.js";
 import type { AttemptRecord } from "../types/models.js";
+import { OPERATOR_RESUME_MARKER } from "../types/models.js";
 
 /**
  * Single source of truth for "may this person/site combination be processed now?".
@@ -42,7 +43,17 @@ export function isSiteProcessable(input: EligibilityInput, config: EligibilityCo
   // path: restart, retry, reconciliation, hotkeys, deferred queue, crash recovery.
   if (latest.status === "COMPLETED" || latest.status === "SITE INVALID") return false;
 
-  // Resume states are always processable.
+  // Submission-uncertain quarantine: a final submit may have been sent for this
+  // attempt. It is NEVER auto-processable (mag start / restart / worker
+  // iteration / targeted run) — only an explicit `mag handoff resume` releases
+  // it, which stamps OPERATOR_RESUME_MARKER into the note.
+  if (latest.status === "AWAITING CONFIRMATION") {
+    return latest.notes.includes(OPERATOR_RESUME_MARKER);
+  }
+
+  // Resume states are processable. A submission-uncertain attempt is NEVER
+  // parked here as WAITING FOR HUMAN — it uses AWAITING CONFIRMATION above — so
+  // this stays true for ordinary blocker handoffs (CAPTCHA, consent, …).
   if (latest.status === "WAITING FOR HUMAN" || latest.status === "IN PROGRESS") return true;
 
   // Operator-authorized manual reset overrides every ceiling below.

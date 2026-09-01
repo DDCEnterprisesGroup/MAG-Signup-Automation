@@ -1,8 +1,25 @@
-import { runPreflight } from "../operations/preflight.js";
+import { runPreflight, type PreflightOptions } from "../operations/preflight.js";
 
-const startingWorker = process.argv.includes("--starting");
+const argv = process.argv.slice(2);
+const flag = (name: string): string | undefined => {
+  const index = argv.indexOf(name);
+  return index >= 0 ? argv[index + 1]?.trim() : undefined;
+};
 
-const result = await runPreflight(undefined, (line) => console.log(line), { startingWorker }).catch((error: unknown) => {
+const options: PreflightOptions = { startingWorker: argv.includes("--starting") };
+if (argv.includes("--targeted")) {
+  const personId = (flag("--person") ?? "").toUpperCase();
+  const siteId = (flag("--site") ?? "").toUpperCase();
+  if (!/^P\d{4,}$/.test(personId) || !/^S\d{4,}$/.test(siteId)) {
+    console.log("Reconciling... FAIL");
+    console.log("Reason:");
+    console.log("  - `--targeted` requires --person P#### --site S####");
+    process.exit(1);
+  }
+  options.targeted = { personId, siteId };
+}
+
+const result = await runPreflight(undefined, (line) => console.log(line), options).catch((error: unknown) => {
   console.log("");
   console.log("Reconciling... FAIL");
   console.log("Worker NOT started.");

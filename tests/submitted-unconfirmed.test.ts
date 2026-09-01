@@ -10,6 +10,8 @@ import { WorkbookStore } from "../src/excel/workbook-store.js";
 import { Logger } from "../src/logging/logger.js";
 import { WorkflowEngine } from "../src/workflow/engine.js";
 import type { LiveStatus, OperatorControl, OperatorRequest } from "../src/workflow/operator-console.js";
+import { OPERATOR_RESUME_MARKER } from "../src/types/models.js";
+import { appendNote } from "../src/utils/text.js";
 import { createFixtureWorkbook } from "./helpers/workbook-fixture.js";
 
 /** Presses SPACE (defer) exactly once, on the Nth engine checkpoint. */
@@ -107,25 +109,38 @@ test("SPACE after an auto-submit (slow confirmation) does not restart the flow a
   try {
     // Checkpoint #5 lands right after the final "Sign Up" click, while /done is loading.
     const r1 = await run(new SpaceAt(5), "run1");
-    const submitCount = requests.filter((x) => x === "/done").length;
-    const entryCountRun1 = requests.filter((x) => x === "/signup").length;
+    assert.ok(requests.filter((x) => x === "/done").length >= 1, "run 1 submitted the form (GET /done)");
+    assert.equal(requests.filter((x) => x === "/signup").length, 1, "run 1 loaded the entry form exactly once");
+    assert.equal(r1.status, "AWAITING CONFIRMATION", "submission-uncertain — durable typed state, not a note");
+    assert.equal(r1.retry, "NO");
+    assert.match(r1.lastUrl, /\/done$/, "pinned to the confirmation URL");
+    assert.doesNotMatch(r1.notes, new RegExp(OPERATOR_RESUME_MARKER), "not yet operator-released");
 
-    assert.ok(submitCount >= 1, "run 1 should have submitted the form (GET /done)");
-    assert.equal(entryCountRun1, 1, "run 1 loaded the entry form exactly once");
-    assert.notEqual(r1.status, "OPERATOR_DEFERRED", "a submitted form must not be deferred as retryable-from-scratch");
-    assert.equal(r1.status, "WAITING FOR HUMAN");
-    assert.equal(r1.retry, "YES");
-    assert.match(r1.lastUrl, /\/done$/, "run 1 attempt is pinned to the confirmation URL");
-    assert.match(r1.notes, /does not resubmit/);
-
-    // Run 2: no operator. Must resume the confirmation URL, never the entry form.
+    // Run 2: ordinary `mag start`. The pair is PARKED — nothing is requested.
     const before = requests.length;
     const r2 = await run(new SpaceAt(0), "run2");
-    const run2Requests = requests.slice(before);
+    assert.equal(requests.slice(before).length, 0, "run 2 makes no HTTP requests — the pair is quarantined");
+    assert.equal(r2.status, "AWAITING CONFIRMATION", "still parked after a normal restart");
 
-    assert.equal(run2Requests.filter((x) => x === "/signup").length, 0, "run 2 must not re-navigate the signup entry URL");
-    assert.equal(requests.filter((x) => x === "/signup").length, 1, "the signup entry URL was requested exactly once across both runs");
-    assert.equal(r2.status, "COMPLETED", "run 2 resumes at the confirmation page and confirms completion");
+    // Explicit operator release (equivalent of `mag handoff resume`): stamp the marker.
+    {
+      const wb = new WorkbookStore(wbPath);
+      await wb.open();
+      try {
+        const attempt = wb.getAttempts().find((a) => a.personId === "P0001" && a.siteId === "S0001");
+        assert.ok(attempt);
+        await wb.updateAttempt(attempt, { notes: appendNote(attempt.notes, `${OPERATOR_RESUME_MARKER} re-check`) });
+      } finally {
+        await wb.release();
+      }
+    }
+
+    const beforeResume = requests.length;
+    const r3 = await run(new SpaceAt(0), "run3");
+    const resumeReqs = requests.slice(beforeResume);
+    assert.equal(resumeReqs.filter((x) => x === "/signup").length, 0, "release re-checks the confirmation URL, never the entry form");
+    assert.equal(requests.filter((x) => x === "/signup").length, 1, "signup entry URL requested exactly once across all runs");
+    assert.equal(r3.status, "COMPLETED", "the confirmation page now shows success");
   } finally {
     server.closeAllConnections();
     await new Promise<void>((r) => server.close(() => r()));

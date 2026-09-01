@@ -63,7 +63,14 @@ export function prefilledValueConflicts(field: string, currentRaw: string, expec
       const c = normalizeText(current);
       const e = normalizeText(expected);
       if (!c || !e) return false;
-      return c !== e && !c.includes(e) && !e.includes(c);
+      if (c === e) return false;
+      // Accept only a full whitespace-token subset ("jon" within "jon smith"),
+      // never an arbitrary substring ("jo" within "jonathan" -> conflict).
+      const cTokens = c.split(" ").filter(Boolean);
+      const eTokens = e.split(" ").filter(Boolean);
+      const subset = (a: string[], b: string[]): boolean => a.length > 0 && a.every((token) => b.includes(token));
+      if (subset(cTokens, eTokens) || subset(eTokens, cTokens)) return false;
+      return true;
     }
     case "dob":
     case "dobYear": {
