@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { launchCompatibleBrowser } from "../src/browser/browser-launch.js";
 import { scanAndFillPage } from "../src/forms/form-handler.js";
-import type { PersonProfile } from "../src/types/models.js";
+import type { AttemptRecord, PersonProfile, Site } from "../src/types/models.js";
 import { captureHandoffSnapshot, observeHandoffPage } from "../src/workflow/handoff-observer.js";
+import { waitForOperator } from "../src/workflow/human-handoff.js";
+import type { OperatorControl, OperatorRequest } from "../src/workflow/operator-console.js";
 
 const person: PersonProfile = {
   rowNumber: 2,
@@ -25,6 +27,18 @@ const person: PersonProfile = {
   currentSiteId: "",
   lastUpdated: "",
 };
+
+const site = { id: "S-TEST", name: "Test Site" } as Site;
+const attempt = { attemptId: "A-TEST", formStep: 1 } as AttemptRecord;
+
+function scriptedControl(requests: OperatorRequest[]): OperatorControl {
+  return {
+    stopRequested: false,
+    async checkpoint() { return requests.shift() ?? null; },
+    suspendInput() {}, resumeInput() {}, setStatus() {}, progress() {}, note() {},
+    countCompleted() {}, countFailed() {}, countDeferred() {}, countHandoff() {}, close() {},
+  };
+}
 
 test("human-handoff page observation regressions", async (context) => {
   let browser;
@@ -111,6 +125,35 @@ test("human-handoff page observation regressions", async (context) => {
       assert.notEqual(result.kind, "completed");
       const rescanned = await scanAndFillPage(page, person);
       assert.equal(rescanned.success, false);
+      await page.close();
+    });
+
+    await context.test("permanent-skip hotkey remains actionable during human handoff", async () => {
+      const page = await browser.newPage();
+      await page.setContent('<form><label>SSN <input name="ssn"></label></form>');
+      const decision = await waitForOperator(
+        person, site, attempt,
+        { category: "REQUIRED_MANUAL_FIELD", reason: "Restricted field" },
+        page,
+        scriptedControl(["skip"]),
+      );
+      assert.deepEqual(decision, { kind: "control", request: "skip" });
+      await page.close();
+    });
+
+    await context.test("ambiguous manual page changes automatically request a rescan", async () => {
+      const page = await browser.newPage();
+      await page.setContent('<form><label>SSN <input name="ssn"></label><button id="next" type="button">Next</button></form><script>next.onclick=()=>{history.pushState({},"","#next");document.body.innerHTML="<h1>Review details</h1>"}</script>');
+      const waiting = waitForOperator(
+        person, site, attempt,
+        { category: "REQUIRED_MANUAL_FIELD", reason: "Restricted field" },
+        page,
+        scriptedControl([]),
+      );
+      await page.click("#next");
+      const decision = await waiting;
+      assert.equal(decision.kind, "resume");
+      if (decision.kind === "resume") assert.equal(decision.source, "automatic");
       await page.close();
     });
 

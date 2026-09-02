@@ -894,16 +894,10 @@ export class WorkflowEngine {
     });
     this.control.countHandoff();
     this.control.setStatus({ phase: "waiting for human" });
-    // Release the raw-mode keyboard so the handoff prompt's own readline can use stdin.
-    this.control.suspendInput();
-    let decision: OperatorHandoffDecision;
-    try {
-      decision = await waitForOperator(person, site, attempt, reason, page);
-    } finally {
-      this.control.resumeInput();
-    }
+    const decision = await waitForOperator(person, site, attempt, reason, page, this.control);
     this.stats.waitingForHuman = Math.max(0, this.stats.waitingForHuman - 1);
     if (decision.kind === "completed") return decision;
+    if (decision.kind === "control") throw new SiteControlSignal(decision.request);
 
     const resumedUrl = page.url();
     await this.workbook.updateAttempt(attempt, {
