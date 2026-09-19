@@ -12,9 +12,16 @@ export class MagSupabaseIntakeClient {
   }
   async submitIntake(payload) {
     if (!this.accessToken) await this.authenticate();
-    const response = await this.fetch(`${this.url}/functions/v1/mag-order-intake`, { method: "POST", headers: { apikey: this.key, Authorization: `Bearer ${this.accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || `MAG intake failed (${response.status}).`);
-    return body;
+    for (let attempt = 0; ; attempt += 1) {
+      const response = await this.fetch(`${this.url}/functions/v1/mag-order-intake`, { method: "POST", headers: { apikey: this.key, Authorization: `Bearer ${this.accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (response.status === 401 && attempt === 0) {
+        this.accessToken = "";
+        await this.authenticate();
+        continue;
+      }
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || `MAG intake failed (${response.status}).`);
+      return body;
+    }
   }
 }
