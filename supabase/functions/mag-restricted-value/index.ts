@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
-import { bearer, corsHeaders, json, jwtPayload } from "../_shared/http.ts";
+import { bearer, corsHeaders, json, jwtPayload, safeErrorCode } from "../_shared/http.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -27,9 +27,9 @@ Deno.serve(async (req) => {
     return json({ value: row.plaintext, maskedHint: row.masked_hint, classification: row.classification });
   } catch (error) {
     if (actorId) {
-      await admin.from("mag_audit_events").insert({ actor_id: actorId, action: "RESTRICTED_ACCESS_FAILED", entity_type: "PROFILE", success: false, metadata: { reason_code: error instanceof Error ? error.message.slice(0, 80) : "UNKNOWN" } });
+      await admin.from("mag_audit_events").insert({ actor_id: actorId, action: "RESTRICTED_ACCESS_FAILED", entity_type: "PROFILE", success: false, metadata: { reason_code: safeErrorCode(error, "ACCESS_DENIED") } });
     }
-    const code = error instanceof Error ? error.message : "ACCESS_DENIED";
+    const code = safeErrorCode(error, "ACCESS_DENIED");
     return json({ error: code }, code === "AUTH_REQUIRED" ? 401 : 403);
   }
 });

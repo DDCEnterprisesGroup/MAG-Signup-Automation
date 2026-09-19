@@ -11,8 +11,8 @@ All required V1 capabilities run in the browser:
 - data-driven site adapters;
 - import/export and local debug logs.
 
-There is no server-side computation, shared database, OAuth exchange, scheduled work, remote AI call, or cross-device collaboration requirement. A backend would add privacy, credential, availability, and maintenance cost without enabling a V1 requirement.
+The original V1 autofill flow needed no server-side computation, shared database, OAuth exchange, scheduled work, or cross-device collaboration. V1.1 adds authenticated shared profiles through Supabase; the extension still performs detection and filling locally.
 
-The existing hosted/Railway component is **not required by this extension**. This implementation does not delete or modify production infrastructure. It can be shut down only after the owner separately confirms that no legacy process still depends on it.
+The repository mentions a historical hosted/Railway component but contains no Railway configuration or production URL that proves its current purpose or deployment state. The extension itself runs in the browser; V1.1 also depends on Supabase Auth, Postgres, and Edge Functions for shared profiles. Keep any historical hosted component in place until its owner identifies it and checks live dependencies.
 
-A lightweight backend may become beneficial later for opt-in team profile synchronization, centrally managed approved content, adapter distribution, or audit history. Those features should use authenticated, minimal, versioned data and must not introduce server-side submission.
+Future hosted components must preserve authenticated, minimal, versioned data and must not introduce server-side form submission.

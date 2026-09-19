@@ -5,6 +5,8 @@ dist/
 *.env
 !.env.example
 data/
+!mag-extension/src/data/
+!mag-extension/src/data/initial-profiles.js
 logs/
 screenshots/
 runtime/

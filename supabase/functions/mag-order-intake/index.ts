@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
-import { bearer, corsHeaders, json } from "../_shared/http.ts";
+import { bearer, corsHeaders, json, safeErrorCode } from "../_shared/http.ts";
 import { runOrderIntake } from "../_shared/order-intake.ts";
 
 Deno.serve(async (req) => {
@@ -19,7 +19,7 @@ Deno.serve(async (req) => {
     const result = await runOrderIntake(admin, actorId, payload);
     return json(result);
   } catch (error) {
-    const code = error instanceof Error ? error.message : "INTAKE_FAILED";
-    return json({ error: code }, code === "AUTH_REQUIRED" ? 401 : 400);
+    const code = safeErrorCode(error, "INTAKE_FAILED");
+    return json({ error: code }, code === "AUTH_REQUIRED" ? 401 : code === "SERVICE_ACCESS_REQUIRED" ? 403 : code === "INTAKE_FAILED" ? 500 : 400);
   }
 });

@@ -7,3 +7,4 @@ export class MagSupabaseIntakeClient {
   authenticate(): Promise<void>;
   submitIntake(payload: unknown): Promise<unknown>;
 }
+export function validateIntake(payload: unknown): unknown;

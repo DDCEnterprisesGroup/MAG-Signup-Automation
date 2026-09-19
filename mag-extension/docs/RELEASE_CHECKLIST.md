@@ -21,9 +21,8 @@
    - [ ] Opening the extension's options page (right-click icon -> Options,
      or the gear/link in the popup) loads without errors.
    - [ ] Sign-in from Settings and "Sync approved profiles" works once a
-     Supabase project is linked (see docs/MAG_V1_1.md step 6) -- **blocked
-     today**, no MAG Supabase project exists yet (see OWNER ACTION REQUIRED
-     in the session report).
+     Supabase project is confirmed and linked (see docs/MAG_V1_1.md). The
+     local extension URL alone does not establish which project Dre authorizes.
    - [ ] Load one of the fixtures under `mag-extension/fixtures/*.html` and
      confirm field detection, safe fill, and review highlights work, and
      that no field is ever auto-submitted.

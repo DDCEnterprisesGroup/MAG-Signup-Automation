@@ -11,10 +11,10 @@ const credentialPattern = /password|passcode|recovery.?code|auth(?:entication)?.
 
 export interface OrderIntakePayload {
   externalOrderId: string;
-  customer: { name: string; email?: string | null; phone?: string | null };
+  customer: { externalId: string; name: string; email?: string | null; phone?: string | null };
   serviceType: string;
   projectName?: string | null;
-  profile: { type?: string; label: string; fields?: Record<string, unknown> };
+  profile: { externalId: string; type?: string; label: string; fields?: Record<string, unknown> };
 }
 
 export interface OrderIntakeResult {
@@ -41,25 +41,47 @@ function validateField(definition: Record<string, unknown>, value: unknown): { s
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- admin is a supabase-js client; typing its full chainable surface here would duplicate the SDK's own types for no safety benefit in an Edge Function. */
 export async function runOrderIntake(admin: any, actorId: string, payload: OrderIntakePayload): Promise<OrderIntakeResult> {
-  if (!payload?.externalOrderId || !payload?.customer?.name || !payload?.serviceType || !payload?.profile?.label) throw new Error("INVALID_INTAKE");
+  const required = [payload?.externalOrderId, payload?.customer?.externalId, payload?.customer?.name, payload?.serviceType, payload?.profile?.externalId, payload?.profile?.label];
+  if (required.some((value) => typeof value !== "string" || !value.trim() || value.length > 254)
+      || !["ORGANIZATION", "PERSON", "EVENT", "PRODUCT", "OTHER"].includes(payload.profile.type || "OTHER")
+      || (payload.profile.fields !== undefined && (typeof payload.profile.fields !== "object" || payload.profile.fields === null || Array.isArray(payload.profile.fields)))) {
+    throw new Error("INVALID_INTAKE");
+  }
+  const externalOrderId = payload.externalOrderId.trim();
+  const externalCustomerId = payload.customer.externalId.trim();
+  const externalProfileId = payload.profile.externalId.trim();
+  const { data: priorOrder, error: priorOrderError } = await admin.from("mag_orders")
+    .select("id,customer_id,status").eq("source", "ORDER_BOT").eq("external_order_id", externalOrderId).maybeSingle();
+  if (priorOrderError) throw priorOrderError;
+  const { data: knownCustomer, error: knownCustomerError } = await admin.from("mag_customers")
+    .select("id").eq("scope", "CUSTOMER").eq("external_customer_id", externalCustomerId).maybeSingle();
+  if (knownCustomerError) throw knownCustomerError;
+  if (priorOrder && priorOrder.customer_id !== knownCustomer?.id) throw new Error("ORDER_IDENTITY_CONFLICT");
   const normalizedName = String(payload.customer.name).trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const { data: customer, error: customerError } = await admin.from("mag_customers").upsert({
-    scope: "CUSTOMER", display_name: String(payload.customer.name).trim(), normalized_name: normalizedName,
+    scope: "CUSTOMER", external_customer_id: externalCustomerId, display_name: String(payload.customer.name).trim(), normalized_name: normalizedName,
     primary_email: payload.customer.email || null, primary_phone: payload.customer.phone || null, created_by: actorId,
-  }, { onConflict: "scope,normalized_name" }).select().single();
+  }, { onConflict: "scope,external_customer_id" }).select().single();
   if (customerError) throw customerError;
 
   const { data: order, error: orderError } = await admin.from("mag_orders").upsert({
-    customer_id: customer.id, external_order_id: String(payload.externalOrderId), service_type: String(payload.serviceType),
-    source: "ORDER_BOT", status: "READY_FOR_REVIEW", project_name: payload.projectName || null,
+    customer_id: customer.id, external_order_id: externalOrderId, service_type: String(payload.serviceType),
+    source: "ORDER_BOT", status: priorOrder?.status || "READY_FOR_REVIEW", project_name: payload.projectName || null,
     submitted_at: new Date().toISOString(), created_by: actorId,
   }, { onConflict: "source,external_order_id" }).select().single();
   if (orderError) throw orderError;
 
+  const { data: priorProfile, error: priorProfileError } = await admin.from("mag_profiles")
+    .select("id,status").eq("order_id", order.id).eq("external_profile_id", externalProfileId).maybeSingle();
+  if (priorProfileError) throw priorProfileError;
+  if (priorProfile?.status === "ARCHIVED") throw new Error("PROFILE_ARCHIVED");
+  if (priorProfile?.status === "ACTIVE") {
+    return { customerId: customer.id, orderId: order.id, profileId: priorProfile.id, status: "ACTIVE", acceptedFields: [], rejectedFields: [] };
+  }
   const { data: profile, error: profileError } = await admin.from("mag_profiles").upsert({
-    customer_id: customer.id, order_id: order.id, profile_type: payload.profile.type || "OTHER", profile_scope: "CUSTOMER",
+    customer_id: customer.id, order_id: order.id, external_profile_id: externalProfileId, profile_type: payload.profile.type || "OTHER", profile_scope: "CUSTOMER",
     label: String(payload.profile.label), status: "DRAFT", created_by: actorId,
-  }, { onConflict: "customer_id,profile_type,label" }).select().single();
+  }, { onConflict: "order_id,external_profile_id" }).select().single();
   if (profileError) throw profileError;
 
   let hasUnknown = false;
@@ -92,8 +114,10 @@ export async function runOrderIntake(admin: any, actorId: string, payload: Order
     accepted.push(key);
   }
   const status = hasUnknown || hasInvalid ? "INCOMPLETE" : "READY_FOR_REVIEW";
-  await admin.from("mag_profiles").update({ status }).eq("id", profile.id);
-  await admin.from("mag_audit_events").insert({ actor_id: actorId, action: "BOT_INTAKE_CREATED", entity_type: "PROFILE", entity_id: profile.id, success: true, metadata: { accepted_field_count: accepted.length, rejected_field_count: rejected.length, status } });
+  const { error: statusError } = await admin.from("mag_profiles").update({ status }).eq("id", profile.id);
+  if (statusError) throw statusError;
+  const { error: auditError } = await admin.from("mag_audit_events").insert({ actor_id: actorId, action: "BOT_INTAKE_CREATED", entity_type: "PROFILE", entity_id: profile.id, success: true, metadata: { accepted_field_count: accepted.length, rejected_field_count: rejected.length, status } });
+  if (auditError) throw auditError;
   return { customerId: customer.id, orderId: order.id, profileId: profile.id, status, acceptedFields: accepted, rejectedFields: rejected };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */

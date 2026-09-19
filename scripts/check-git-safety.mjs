@@ -24,7 +24,7 @@ const secretPattern = /(?:password|secret|api[_-]?key|access[_-]?token|private[_
 const violations = [];
 for (const relative of [...new Set(files)]) {
   const normalized = relative.replaceAll("\\", "/");
-  if (forbiddenPath.test(normalized) && normalized !== "templates/MAG_Signup_Automation_Clean_Template.xlsx") {
+  if (forbiddenPath.test(normalized) && !["templates/MAG_Signup_Automation_Clean_Template.xlsx", "mag-extension/src/data/initial-profiles.js"].includes(normalized)) {
     violations.push(`forbidden path: ${normalized}`);
     continue;
   }

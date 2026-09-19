@@ -54,9 +54,13 @@ To change a security class, first deactivate the definition, migrate values thro
 
 ## Bot integration
 
-`integrations/order-bot/mag-supabase-client.mjs` is the host-side adapter. Its credentials belong in the bot host's secret manager using the names in `.env.example`. Provision a dedicated Auth user, set its `mag_memberships.role` to `SERVICE`, and grant no browser or admin role. Call `submitIntake` after the order bot has assembled the payload. `externalOrderId` makes retries idempotent.
+`integrations/order-bot/mag-supabase-client.mjs` is the host-side adapter. Its credentials belong in the bot host's secret manager using the names in `.env.example`. Provision a dedicated Auth user, set its `mag_memberships.role` to `SERVICE`, and grant no browser or admin role. Call `submitIntake` after the order bot has assembled the payload. The Python bot uses the same contract. `customer.externalId`, `externalOrderId`, and `profile.externalId` are stable source identifiers; retries use all three and never use a customer name or profile label as identity. An already `ACTIVE` profile remains approved on a late retry.
 
-The local `MAGHausPR-Bot` directory was inspected but contains no checkout/source or hosting configuration, so the adapter could not be inserted into the deployed bot process and its current host could not be verified. Do not move hosting. Restore/identify the real checkout first, add this adapter at the successful-order boundary, set host secrets, and exercise one non-production order.
+The SERVICE Auth user must be created separately with an authorized Supabase Admin operation. Once Dre confirms the project and provides that user's UUID, an authorized service-role operation can call `public.mag_provision_service_membership(<auth-user-uuid>,'MAG Order Bot')`. The migration creates only this guarded membership binding and a revoke function; it contains no credentials or fixed UUID. The binding refuses to replace an existing non-SERVICE membership.
+
+The shared synthetic valid and invalid payloads live in `tests/fixtures/` in this repository and the bot repository. Both adapters and the intake logic test them. No live customer value belongs in a fixture.
+
+The canonical Python checkout is `MAGHausPR-Bot-GitHub`. It contains the outbound adapter, durable retry state, and the order acceptance hook. Its current production host remains unverified. Keep sync disabled in runtime configuration until the project, SERVICE identity, deployment, and live RLS tests are complete.
 
 ## Audit and operations
 

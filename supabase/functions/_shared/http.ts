@@ -10,6 +10,17 @@ export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
+export function safeErrorCode(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : "";
+  const publicCodes = new Set([
+    "AUTH_REQUIRED", "SERVICE_ACCESS_REQUIRED", "INVALID_INTAKE", "ORDER_IDENTITY_CONFLICT",
+    "PROFILE_ARCHIVED", "ADMIN_REQUIRED", "MFA_REQUIRED", "PROFILE_NOT_READY",
+    "PROFILE_VALIDATION_FAILED", "RECENT_MFA_REQUIRED", "INVALID_REQUEST",
+    "RESTRICTED_VALUE_UNAVAILABLE",
+  ]);
+  return publicCodes.has(message) ? message : fallback;
+}
+
 export function bearer(req: Request): string {
   const value = req.headers.get("Authorization") || "";
   if (!value.startsWith("Bearer ")) throw new Error("AUTH_REQUIRED");

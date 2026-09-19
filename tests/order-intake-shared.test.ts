@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runOrderIntake } from "../supabase/functions/_shared/order-intake.js";
 
@@ -41,7 +42,12 @@ function fakeAdmin(options: { fieldDefinitions?: Record<string, unknown>[] } = {
       },
       select(cols = "*") {
         calls.push({ table, op: "select", args: [cols] });
-        return Promise.resolve({ data: store[table] ?? [], error: null }) as unknown as { data: unknown; error: null; eq: (c: string, v: unknown) => unknown };
+        let rows = store[table] ?? [];
+        return {
+          eq(column: string, value: unknown) { rows = rows.filter((row) => row[column] === value); return this; },
+          async maybeSingle() { return { data: rows[0] ?? null, error: null }; },
+          then(resolve: (value: { data: Record<string, unknown>[]; error: null }) => unknown) { return Promise.resolve({ data: rows, error: null }).then(resolve); },
+        };
       },
       update(patch: Record<string, unknown>) {
         calls.push({ table, op: "update", args: [patch] });
@@ -68,12 +74,16 @@ function fakeAdmin(options: { fieldDefinitions?: Record<string, unknown>[] } = {
   };
 }
 
-const basePayload = {
-  externalOrderId: "o1",
-  customer: { name: "Test Customer", email: "t@example.invalid" },
-  serviceType: "PR500",
-  profile: { type: "PERSON", label: "Test Customer", fields: {} },
-};
+const basePayload = JSON.parse(readFileSync(new URL("./fixtures/mag-intake-valid.json", import.meta.url), "utf8"));
+const invalidPayload = JSON.parse(readFileSync(new URL("./fixtures/mag-intake-invalid.json", import.meta.url), "utf8"));
+
+test("database constraints use stable customer and profile identifiers", () => {
+  const migration = readFileSync(new URL("../supabase/migrations/20260919170054_mag_v1_1_external_identity.sql", import.meta.url), "utf8");
+  assert.match(migration, /unique \(scope, external_customer_id\)/);
+  assert.match(migration, /unique \(order_id, external_profile_id\)/);
+  assert.match(migration, /drop constraint if exists mag_customers_scope_normalized_name_key/);
+  assert.match(migration, /drop constraint if exists mag_profiles_customer_id_profile_type_label_key/);
+});
 
 test("creates customer, order, and profile with the expected upsert conflict targets", async () => {
   const admin = fakeAdmin();
@@ -81,9 +91,9 @@ test("creates customer, order, and profile with the expected upsert conflict tar
   assert.equal(result.status, "READY_FOR_REVIEW");
   const upserts = admin.calls.filter((c) => c.op === "upsert");
   assert.deepEqual(upserts.map((c) => c.table), ["mag_customers", "mag_orders", "mag_profiles"]);
-  assert.equal((upserts[0]!.args[1] as { onConflict: string }).onConflict, "scope,normalized_name");
+  assert.equal((upserts[0]!.args[1] as { onConflict: string }).onConflict, "scope,external_customer_id");
   assert.equal((upserts[1]!.args[1] as { onConflict: string }).onConflict, "source,external_order_id");
-  assert.equal((upserts[2]!.args[1] as { onConflict: string }).onConflict, "customer_id,profile_type,label");
+  assert.equal((upserts[2]!.args[1] as { onConflict: string }).onConflict, "order_id,external_profile_id");
 });
 
 test("a credential-shaped field key is rejected and never reaches the database", async () => {
@@ -131,8 +141,49 @@ test("a CREDENTIAL-classed or FORBIDDEN-storage definition is rejected even if t
 
 test("throws INVALID_INTAKE for a missing required field instead of partially writing", async () => {
   const admin = fakeAdmin();
-  await assert.rejects(() => runOrderIntake(admin, "actor-1", { ...basePayload, customer: { name: "" } }), /INVALID_INTAKE/);
+  await assert.rejects(() => runOrderIntake(admin, "actor-1", { ...basePayload, customer: { externalId: "telegram:1", name: "" } }), /INVALID_INTAKE/);
+  await assert.rejects(() => runOrderIntake(admin, "actor-1", invalidPayload), /INVALID_INTAKE/);
   assert.equal(admin.calls.length, 0);
+});
+
+test("same-name customers stay separate and replaying one profile is idempotent", async () => {
+  const admin = fakeAdmin();
+  const first = await runOrderIntake(admin, "actor-1", basePayload);
+  const replay = await runOrderIntake(admin, "actor-1", basePayload);
+  assert.equal(replay.customerId, first.customerId);
+  assert.equal(replay.orderId, first.orderId);
+  assert.equal(replay.profileId, first.profileId);
+  const second = await runOrderIntake(admin, "actor-1", { ...basePayload, externalOrderId: "o2", customer: { ...basePayload.customer, externalId: "telegram:2" } });
+  assert.notEqual(second.customerId, first.customerId);
+  assert.notEqual(second.profileId, first.profileId);
+  assert.equal(admin.store.mag_customers!.length, 2);
+});
+
+test("the same customer may reuse a profile label in another order", async () => {
+  const admin = fakeAdmin();
+  const first = await runOrderIntake(admin, "actor-1", basePayload);
+  const second = await runOrderIntake(admin, "actor-1", { ...basePayload, externalOrderId: "o2" });
+  assert.equal(second.customerId, first.customerId);
+  assert.notEqual(second.orderId, first.orderId);
+  assert.notEqual(second.profileId, first.profileId);
+});
+
+test("an order identifier cannot be reassigned to another customer", async () => {
+  const admin = fakeAdmin();
+  await runOrderIntake(admin, "actor-1", basePayload);
+  await assert.rejects(() => runOrderIntake(admin, "actor-1", { ...basePayload, customer: { ...basePayload.customer, externalId: "telegram:2" } }), /ORDER_IDENTITY_CONFLICT/);
+  assert.equal(admin.store.mag_orders!.length, 1);
+});
+
+test("approved profile stays ACTIVE on a late retry", async () => {
+  const admin = fakeAdmin();
+  const first = await runOrderIntake(admin, "actor-1", basePayload);
+  admin.store.mag_profiles![0]!.status = "ACTIVE";
+  const replay = await runOrderIntake(admin, "actor-1", basePayload);
+  assert.equal(replay.profileId, first.profileId);
+  assert.equal(replay.status, "ACTIVE");
+  assert.equal(admin.store.mag_profiles![0]!.status, "ACTIVE");
+  assert.equal(admin.store.mag_profiles!.length, 1);
 });
 
 test("records a BOT_INTAKE_CREATED audit event with counts but no field values", async () => {

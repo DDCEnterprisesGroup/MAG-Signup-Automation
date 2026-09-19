@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
-import { bearer, corsHeaders, json, jwtPayload } from "../_shared/http.ts";
+import { bearer, corsHeaders, json, jwtPayload, safeErrorCode } from "../_shared/http.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     await admin.from("mag_audit_events").insert({ actor_id: actorId, action: approve ? "PROFILE_APPROVED" : "PROFILE_REJECTED", entity_type: "PROFILE", entity_id: profileId, success: true, metadata: { resulting_status: nextStatus } });
     return json({ profileId, status: nextStatus });
   } catch (error) {
-    const code = error instanceof Error ? error.message : "REVIEW_FAILED";
-    return json({ error: code }, code === "AUTH_REQUIRED" ? 401 : 403);
+    const code = safeErrorCode(error, "REVIEW_FAILED");
+    return json({ error: code }, code === "AUTH_REQUIRED" ? 401 : code === "REVIEW_FAILED" ? 500 : 403);
   }
 });

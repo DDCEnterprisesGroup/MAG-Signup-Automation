@@ -34,8 +34,8 @@ Deno.serve(async (req) => {
     await handleUpdate({ admin, telegram }, update);
     return json({ ok: true });
   } catch (error) {
-    // Do NOT log the full update (may contain customer-entered text/PII) -- only the update_id and error type.
-    console.error("mag-telegram-webhook failed", { updateId: update.update_id, error: error instanceof Error ? error.message : "UNKNOWN" });
+    // Database and Telegram errors can contain submitted values; log only the type.
+    console.error("mag-telegram-webhook failed", { updateId: update.update_id, errorType: error instanceof Error ? error.name : "UNKNOWN" });
     // 500 lets Telegram retry. handleUpdate only marks an update_id processed
     // AFTER its side effects succeed, so a failure here leaves it unmarked and
     // the retry will actually redo the work, not silently no-op.
