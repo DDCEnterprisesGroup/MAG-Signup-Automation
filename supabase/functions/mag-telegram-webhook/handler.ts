@@ -7,8 +7,10 @@
  * authorization -- the full ordering/payment/promotions/affiliates/reviews
  * wizards are not ported yet (tracked there as remaining work). */
 
-import { isAlreadyProcessed, markProcessed, saveSession } from "../_shared/session-store.js";
-import type { TelegramClient } from "../_shared/telegram.js";
+// @ts-ignore Deno source import
+import { isAlreadyProcessed, markProcessed, saveSession } from "../_shared/session-store.ts";
+// @ts-ignore Deno source import
+import type { TelegramClient } from "../_shared/telegram.ts";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- admin is a supabase-js client; see _shared/order-intake.ts for the same rationale. */
 export interface WebhookDeps {

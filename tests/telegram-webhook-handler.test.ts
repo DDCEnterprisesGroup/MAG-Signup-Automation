@@ -90,6 +90,21 @@ test("redelivering the same update_id does not create a second customer row or s
   await handleUpdate({ admin: admin as never, telegram: telegram as never }, update);
   assert.equal(admin.tables.mag_customers!.length, 1);
   assert.equal(telegram.sent.length, 1, "the redelivered update must not be reprocessed");
+  assert.equal(admin.tables.mag_telegram_processed_updates!.filter((row) => row.idempotency_key === "UPDATE:1").length, 1);
+});
+
+test("a failed route leaves its update unmarked so Telegram can retry", async () => {
+  const admin = fakeAdmin();
+  const telegram = fakeTelegram();
+  const update = messageUpdate(101, "/start", 42, 42);
+  const send = telegram.sendMessage;
+  telegram.sendMessage = async () => { throw new Error("synthetic delivery failure"); };
+  await assert.rejects(() => handleUpdate({ admin: admin as never, telegram: telegram as never }, update));
+  assert.equal(admin.tables.mag_telegram_processed_updates!.length, 0);
+  telegram.sendMessage = send;
+  await handleUpdate({ admin: admin as never, telegram: telegram as never }, update);
+  assert.equal(admin.tables.mag_telegram_processed_updates!.filter((row) => row.idempotency_key === "UPDATE:101").length, 1);
+  assert.equal(telegram.sent.length, 1);
 });
 
 test("/admin denies a non-admin telegram user without revealing dashboard content", async () => {

@@ -390,6 +390,11 @@ verify_jwt = true
 [functions.mag-profile-review]
 verify_jwt = true
 
+# Telegram sends its own secret-token header, not a Supabase user JWT.
+# The handler rejects missing/invalid secrets before parsing an update.
+[functions.mag-telegram-webhook]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
