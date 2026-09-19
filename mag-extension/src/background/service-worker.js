@@ -19,6 +19,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.type === MAG.MESSAGE.AUDIT_EVENT) return MAG.SupabaseClient.audit(message.action, message.entityId, message.fieldCanonicalKey);
       if (message.type === MAG.MESSAGE.SYNC_PROFILES) return MAG.SyncEngine.sync();
       if (message.type === MAG.MESSAGE.RESTRICTED_UNLOCK) {
+        if (!MAG.RESTRICTED_AUTOFILL_ENABLED) throw new Error("RESTRICTED_AUTOFILL_DISABLED");
         return MAG.SupabaseClient.invoke(MAG.SUPABASE.restrictedFunction, { profileId: message.profileId, canonicalKey: message.canonicalKey });
       }
     })().then((data) => sendResponse({ ok: true, data })).catch((error) => sendResponse({ ok: false, error: error.message }));

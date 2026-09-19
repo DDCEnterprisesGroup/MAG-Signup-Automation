@@ -19,6 +19,7 @@ const storageMock = () => {
 test("dynamic registry adds STANDARD fields without extension changes and keeps SENSITIVE fields protected", async () => {
   globalThis.MAG = {};
   await load("src/shared/constants.js", "src/core/normalize.js", "src/shared/dynamic-registry.js", "src/core/field-classifier.js", "src/core/profile-mapper.js");
+  assert.equal(MAG.RESTRICTED_AUTOFILL_ENABLED, false);
   MAG.DynamicRegistry.setDefinitions([
     { canonical_key: "favorite_color", semantic_type: "OTHER", display_name: "Favorite color", aliases: ["Preferred Color"], security_class: "STANDARD", cache_policy: "LOCAL", autofill_policy: "CONFIDENCE", active: true },
     { canonical_key: "date_of_birth", semantic_type: "DATE_OF_BIRTH", display_name: "Birthday", aliases: ["DOB", "Date of Birth"], security_class: "SENSITIVE", cache_policy: "NONE", autofill_policy: "REVIEW_REQUIRED", active: true },

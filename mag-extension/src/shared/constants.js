@@ -3,6 +3,8 @@
   const MAG = (root.MAG = root.MAG || {});
 
   MAG.VERSION = "1.1.0";
+  // Keep retrieval and filling closed until Dre completes live AAL2 acceptance.
+  MAG.RESTRICTED_AUTOFILL_ENABLED = false;
   MAG.SEMANTIC_TYPES = Object.freeze([
     "CONTACT_NAME", "FIRST_NAME", "LAST_NAME", "EMAIL", "PHONE", "ORGANIZATION",
     "WEBSITE", "ADDRESS", "CITY", "STATE", "ZIP", "EVENT_NAME", "EVENT_DATE",

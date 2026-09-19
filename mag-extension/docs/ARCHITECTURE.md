@@ -39,7 +39,7 @@ For maxlength fields, MAG chooses the longest stored approved variant that fits.
 
 Profiles are deliberately data-driven and extensible. Local profiles keep the V1 nested shape. Synced profiles use stable `id`, `label`, `kind`, `dynamicFields`, and read-only `sync` metadata. `dynamicFields` keys come from Supabase definitions, so a normal field/alias addition does not require an extension release. Content values may still use approved `short`, `medium`, and `long` variants. Missing properties mean unknown values.
 
-RESTRICTED values are not part of this schema or cache. A separate Edge Function requires recent AAL2, RLS-equivalent authorization, and a separate popup approval before a one-time fill. Plaintext exists only in short-lived extension memory and the page field selected by the human.
+RESTRICTED values are not part of this schema or cache. Retrieval and filling are gated off pending Dre's live AAL2 acceptance. The prepared future flow requires a separate Edge Function with recent AAL2, authorization, and a separate popup approval before a one-time fill. Plaintext must exist only in short-lived extension memory and the page field selected by the human.
 
 ## Site adapters and future AI
 

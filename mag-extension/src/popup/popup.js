@@ -81,7 +81,7 @@
     }
     const actions = document.createElement("div");
     actions.className = "mini-actions";
-    if (item.restricted) {
+    if (item.restricted && MAG.RESTRICTED_AUTOFILL_ENABLED) {
       actions.append(button(transientRestricted.has(item.fieldId) ? "Fill field" : "Unlock / Authenticate", transientRestricted.has(item.fieldId) ? "fill-restricted" : "unlock-restricted", item.fieldId));
     } else if (item.value && !item.reason.startsWith("Human-controlled")) actions.append(button("Accept", "accept", item.fieldId));
     actions.append(button("Edit on page", "focus", item.fieldId));
@@ -146,6 +146,7 @@
     if (!control) return;
     try {
       if (control.dataset.action === "unlock-restricted") {
+        if (!MAG.RESTRICTED_AUTOFILL_ENABLED) throw new Error("RESTRICTED_AUTOFILL_DISABLED");
         const profile = activeProfile();
         if (!profile?.sync?.remoteId) throw new Error("Restricted values are available only for authorized synced profiles.");
         const issue = (latestSummary.items || []).find((item) => item.fieldId === control.dataset.fieldId);
@@ -166,6 +167,7 @@
         return;
       }
       if (control.dataset.action === "fill-restricted") {
+        if (!MAG.RESTRICTED_AUTOFILL_ENABLED) throw new Error("RESTRICTED_AUTOFILL_DISABLED");
         const plaintext = transientRestricted.get(control.dataset.fieldId);
         if (!plaintext) throw new Error("Unlock this restricted field again.");
         const issue = (latestSummary.items || []).find((item) => item.fieldId === control.dataset.fieldId);

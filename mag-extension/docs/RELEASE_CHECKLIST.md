@@ -26,9 +26,8 @@
    - [ ] Load one of the fixtures under `mag-extension/fixtures/*.html` and
      confirm field detection, safe fill, and review highlights work, and
      that no field is ever auto-submitted.
-   - [ ] Restricted-class fields remain gated (masked hint only, no value)
-     until AAL2/MFA is completed -- **blocked today**, same Supabase
-     dependency.
+   - [ ] Restricted-class fields remain blank. Retrieval and Fill are disabled
+     in source until Dre completes live AAL2/MFA acceptance.
 
 Automated coverage already in place and passing (`npm run test:extension`,
 17/17): Manifest V3 structure, no prohibited submission mechanism anywhere

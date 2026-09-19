@@ -112,7 +112,7 @@ test("browser fixtures exercise detection, mapping, review, reset, switching, an
       assert.equal(await page.evaluate(() => window.__magSubmitCount), 0);
     });
 
-    await context.test("restricted fields remain blank until a distinct explicit fill approval", async () => {
+    await context.test("restricted fields remain blank while the AAL2 acceptance gate is closed", async () => {
       await load(page, baseUrl, "restricted.html");
       const analyzed = await page.evaluate(() => {
         MAG.DynamicRegistry.setDefinitions([{ canonical_key: "ssn", semantic_type: "SOCIAL_SECURITY_NUMBER", display_name: "Social Security Number", aliases: ["SSN"], security_class: "RESTRICTED", cache_policy: "NONE", autofill_policy: "EXPLICIT_UNLOCK", active: true }]);
@@ -122,7 +122,7 @@ test("browser fixtures exercise detection, mapping, review, reset, switching, an
       assert.equal(await page.locator("#ssn").inputValue(), "");
       assert.equal(item.restricted, true);
       await page.evaluate(({ fieldId }) => MAG.AutofillEngine.fillRestricted(fieldId, "restricted-probe-value"), { fieldId: item.fieldId });
-      assert.equal(await page.locator("#ssn").inputValue(), "restricted-probe-value");
+      assert.equal(await page.locator("#ssn").inputValue(), "");
       assert.equal(await page.evaluate(() => window.__magSubmitCount), 0);
     });
 

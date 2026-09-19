@@ -44,7 +44,7 @@ Initial contexts are:
 
 The default threshold fills only high-confidence mappings. A medium threshold is available; medium fills remain highlighted for review. Existing page values are preserved by default.
 
-Never store passwords, payment cards, SSNs, banking information, client tax records, unrelated client data, or API keys in a local MAG profile. Restricted remote fields require a recent MFA session, an explicit Unlock action, and a second explicit Fill click; they are never cached or logged.
+Never store passwords, payment cards, SSNs, banking information, client tax records, unrelated client data, or API keys in a local MAG profile. Restricted retrieval and filling are currently disabled. After Dre completes live MFA/AAL2 acceptance, a future controlled release may allow a recent MFA session, an explicit Unlock action, and a second explicit Fill click; those values must never be cached or logged.
 
 ## Local fixtures
 

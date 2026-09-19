@@ -36,11 +36,11 @@ Field behavior:
 |---|---|---|---|
 | STANDARD | ordinary versioned profile table | allowed | confidence policy |
 | SENSITIVE | protected Vault path | none in V1.1 | review/controlled workflow only |
-| RESTRICTED | protected Vault path | never | recent AAL2 MFA unlock plus a separate explicit Fill click |
+| RESTRICTED | protected Vault path | never | disabled until Dre completes live AAL2 acceptance; future unlock and separate Fill click |
 | CREDENTIAL | forbidden | never | never |
 | UNCLASSIFIED | protected quarantine, inactive | never | never until admin classification |
 
-Restricted values use Supabase Vault, which uses authenticated encryption through the installed Vault/pgsodium stack. The database stores a Vault secret UUID, classification, masked hint, and key version—not plaintext in ordinary tables. The Edge Function validates the JWT against Auth, requires `aal2` issued within ten minutes, calls a service-only RPC, returns `Cache-Control: no-store`, and does not log the value. The popup holds the value only in an in-memory `Map` between Unlock and the explicit Fill click, then deletes it. The content script clears its reference after filling. No extension path can submit the form.
+Restricted values use Supabase Vault, which uses authenticated encryption through the installed Vault/pgsodium stack. The database stores a Vault secret UUID, classification, masked hint, and key version—not plaintext in ordinary tables. The Edge Function validates the JWT against Auth, requires `aal2` issued within ten minutes, calls a service-only RPC, returns `Cache-Control: no-store`, and does not log the value. The extension's restricted retrieval and fill paths are gated off in source until acceptance. The prepared popup flow holds a value only in an in-memory `Map` between Unlock and the explicit Fill click, then deletes it. No extension path can submit the form.
 
 Production activation of RESTRICTED data remains disabled operationally until Dre enrolls MFA and completes a real AAL2 acceptance test. No restricted legacy value was migrated. Vault supports key-version metadata for rotation; before storing production restricted data, document and rehearse the project-level Vault root-key rotation/recovery procedure and backup ownership in the Supabase operations runbook.
 
@@ -93,5 +93,5 @@ Before a database rollback, export only the `mag_*` tables and preserve Vault/ke
 4. Open an existing V1 fixture and verify detection, safe fill, review highlights, manual corrections, reset, consent/signature protection, and zero submission.
 5. In Supabase, create/approve a test STANDARD field/profile update; sync and confirm the new alias/value appears without an extension code change.
 6. Archive that test profile; sync and confirm it disappears.
-7. After MFA is enrolled, use a non-production restricted probe: Unlock, authenticate, confirm only a masked hint is shown, click Fill separately, and verify no local cache/log contains the value.
+7. After MFA is enrolled and the live AAL2 flow passes owner acceptance, use a separately approved non-production build to probe Unlock, confirm only a masked hint is shown, click Fill separately, and verify no local cache/log contains the value. Keep the production gate disabled until that acceptance is recorded.
 8. Manually submit only if you intentionally want to submit the real form; MAG itself must never do so.

@@ -181,6 +181,7 @@
   }
 
   function fillRestricted(fieldId, plaintext) {
+    if (!MAG.RESTRICTED_AUTOFILL_ENABLED) return summary();
     const record = records.get(fieldId);
     if (!record?.classification.restricted || typeof plaintext !== "string" || !plaintext) return summary();
     if (record.field.disabled || record.field.readOnly) return summary();
