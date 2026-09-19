@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { parseHandoffArgs, parseTargetedRunArgs } from "../src/cli/operator-args.js";
 
-const ctl = new URL("../scripts/magctl.sh", import.meta.url).pathname;
+const ctl = fileURLToPath(new URL("../scripts/magctl.sh", import.meta.url));
 
 test("targeted operator arguments are exact and reject broad execution", () => {
   assert.deepEqual(parseTargetedRunArgs(["--person", "p0002", "--site", "s0001", "--dry-run"]), { personId: "P0002", siteId: "S0001", rest: ["--dry-run"] });
