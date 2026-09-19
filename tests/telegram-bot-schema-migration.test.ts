@@ -55,10 +55,10 @@ test("catalog/commerce tables are staff-read (authenticated) and service_role-wr
   }
 });
 
-test("customer-order and affiliate-admin sessions cannot collide for the same telegram user", async () => {
+test("customer-order, affiliate-admin, and admin sessions cannot collide for the same telegram user", async () => {
   const sql = await readMigration();
   assert.match(sql, /primary key \(telegram_user_id, session_scope\)/);
-  assert.match(sql, /session_scope text not null default 'CUSTOMER_ORDER' check \(session_scope in \('CUSTOMER_ORDER', 'AFFILIATE_ADMIN'\)\)/);
+  assert.match(sql, /session_scope text not null default 'CUSTOMER_ORDER' check \(session_scope in \('CUSTOMER_ORDER', 'AFFILIATE_ADMIN', 'ADMIN'\)\)/);
 });
 
 test("idempotency table covers both whole-update and per-callback replay", async () => {

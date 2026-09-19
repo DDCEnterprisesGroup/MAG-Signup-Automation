@@ -56,7 +56,7 @@ Migration: `supabase/migrations/20260919120000_mag_telegram_bot_schema.sql`.
 | `admins` | `mag_telegram_admins` (new) | **New** — Telegram numeric-ID admins have no Supabase Auth account, so they cannot live in `mag_memberships` (FK's to `auth.users`) |
 | `products` | `mag_products` | **New** |
 | `orders` | `mag_orders` (+ new commerce columns: `order_number`, `payment_status`, `subtotal`, `discount`, `total`, `payment_method`, `payment_reviewed_by_*`, `payment_reviewed_at`, `refund_policy_accepted_at`, `completed_at`) | **Reused, extended** — `status` (submission lifecycle) and the new `payment_status` (commerce lifecycle) are deliberately separate concerns |
-| `profiles` | `mag_profiles` (+ Vault-backed `mag_private.protected_field_values` for DOB/SSN/email-password) | **Reused as-is** — already a *more* secure replacement for the three Fernet-encrypted SQLite columns; no schema change needed |
+| `profiles` | `mag_profiles` (+ Vault-backed `mag_private.protected_field_values` for DOB/SSN) | **Partially reconciled** — the MAG registry forbids credential storage, including email passwords. The Python add-on still captures an email password. Resolve that workflow before claiming route parity; do not put the password in session JSON, logs, or ordinary profile fields. |
 | `mag_sync_state` | — | **Retired** — it existed only to bridge SQLite -> Supabase after the fact; once the webhook writes Postgres directly there's nothing to sync |
 | `order_items` | `mag_order_items` | **New** |
 | `promotions` | `mag_promotions` | **New** |
@@ -138,3 +138,70 @@ implementation. Retire the polling runtime only after the webhook bot passes
 equivalent tests, Postgres state works, the Telegram webhook works live, and
 the order/admin/payment/profile-creation flows and browser-extension
 visibility have all been verified against the webhook path.
+
+## September 19 implementation state and security boundary
+
+MAG must use a new, separate Supabase project. Do not link this repository to
+the historical DDC project ref found in older test records. The Supabase CLI
+is currently unauthenticated and this repository has no MAG project link, so
+no live MAG migrations or functions have been deployed.
+
+`mag-telegram-webhook` has `verify_jwt = false` because Telegram cannot send a
+Supabase user JWT. Its request boundary requires a matching
+`X-Telegram-Bot-Api-Secret-Token` before parsing the update or creating clients.
+`mag-order-intake`, `mag-profile-review`, and `mag-restricted-value` retain
+`verify_jwt = true`. Never place the Telegram bot token or webhook secret in
+Git. Do not register a webhook while the Python process is polling.
+
+| Route or state | Webhook implementation |
+|---|---|
+| `/start`, active Telegram admin check | Implemented and unit tested |
+| Catalog, service selection, profile count, custom count | Session state and validation implemented; draft creation/intake remains |
+| Customer recent orders, order-number lookup, pricing | Implemented and unit tested; lookup is scoped to the Telegram customer |
+| Add-on selection, draft creation, customer intake, profile review/edit | Pending |
+| Referral, refund acknowledgement, payment method, proof upload | Pending |
+| Admin dashboard, payment-status lists, order search/view, status history | Implemented and unit tested with active Telegram admin checks |
+| Proof approve/reject and order status mutation | Pending |
+| Promotions, affiliates, reviews | Pending |
+
+The Python bot's `email_password` intake conflicts with the MAG registry's
+`CREDENTIAL`/`FORBIDDEN` policy. DOB uses SENSITIVE Vault storage and SSN uses
+RESTRICTED Vault storage; neither justifies storing an email password in the
+session or profile. Resolve this product workflow with Dre before enabling
+the add-on in the webhook. The original SQLite bot remains operational.
+
+The Postgres `mag_orders.status` column is the profile lifecycle
+(`DRAFT`/`READY_FOR_REVIEW`/etc.), while the Python order status combines
+payment and operations (`AWAITING_PAYMENT`/`PAYMENT_REVIEW`/`PENDING`/etc.).
+The webhook port must map those separately into `status` and
+`payment_status`, and seed catalog, payment settings, Telegram admin IDs,
+order numbers, and existing SQLite rows before parity can be demonstrated.
+
+## Controlled cutover procedure (prepare only; Dre must be present)
+
+1. Stop new order writes briefly and back up SQLite, including its WAL, with
+   SQLite's online backup API; keep the backup encrypted and verify it opens.
+2. Migrate and reconcile customers, orders, profiles, proofs, products,
+   payment settings, admins, promotions, referrals, reviews, and sessions in
+   the dedicated MAG Postgres project. Check counts and representative
+   relationships without printing customer data.
+3. Deploy the tested Edge Functions and MAG secrets. Keep JWT verification on
+   intake, review, and restricted-value functions.
+4. Health-check the webhook endpoint with a missing and an invalid Telegram
+   secret; both must be denied. Test a valid secret with a harmless update.
+5. With Dre present, pause polling and call Telegram `setWebhook` with the
+   HTTPS function URL and a locally configured `secret_token`.
+6. Verify `getWebhookInfo` shows the intended URL and no delivery error.
+7. Send controlled test messages and callbacks, including a duplicate
+   update/callback, using nonproduction records.
+8. Verify customer order, admin, payment proof, profile review, and extension
+   visibility paths against Postgres and Telegram responses.
+9. Observe function errors, Telegram retries, idempotency rows, and logs.
+   Confirm logs contain no intake values or full sensitive responses.
+10. Keep the SQLite backup and rollback instructions accessible throughout
+    the observation window. If any gate fails, call Telegram `deleteWebhook`
+    without dropping pending updates, verify `getWebhookInfo`, restore the
+    SQLite snapshot if Postgres-only writes require it, then resume polling
+    and verify a controlled `/start` and order-status request.
+
+Do not call `setWebhook` or `deleteWebhook` as part of local parity work.

@@ -26,15 +26,16 @@ create table public.mag_telegram_admins (
   created_at timestamptz not null default now()
 );
 
--- Two scopes, not one row per user: the SQLite design deliberately kept
+-- Separate scopes, not one row per user: the SQLite design deliberately kept
 -- order_sessions (24h TTL) and affiliate_admin_sessions (1h TTL) separate
 -- so an admin running the affiliate wizard can never collide with or
--- discard that same person's in-progress customer order. A single
+-- discard that same person's in-progress customer order. ADMIN provides
+-- independent short-lived dashboard/search state. A single
 -- telegram_user_id-only row would reintroduce that collision, so the scope
 -- is part of the key instead.
 create table public.mag_telegram_sessions (
   telegram_user_id bigint not null,
-  session_scope text not null default 'CUSTOMER_ORDER' check (session_scope in ('CUSTOMER_ORDER', 'AFFILIATE_ADMIN')),
+  session_scope text not null default 'CUSTOMER_ORDER' check (session_scope in ('CUSTOMER_ORDER', 'AFFILIATE_ADMIN', 'ADMIN')),
   chat_id bigint not null,
   current_flow text,
   current_step text,
@@ -47,14 +48,14 @@ create table public.mag_telegram_sessions (
 );
 create index mag_telegram_sessions_expires_idx on public.mag_telegram_sessions(expires_at);
 comment on table public.mag_telegram_sessions is
-  'Two rows possible per Telegram user, one per session_scope. The webhook is stateless per-invocation, so every command/callback must load, act on, and save the row for its scope instead of relying on in-memory conversation state. Replaces SQLite order_sessions (CUSTOMER_ORDER, 24h TTL) and affiliate_admin_sessions (AFFILIATE_ADMIN, 1h TTL -- set expires_at explicitly on insert for that scope).';
+  'Independent Telegram session scopes. The webhook is stateless per-invocation, so every command/callback must load, act on, and save the row for its scope instead of relying on in-memory conversation state. CUSTOMER_ORDER lasts 24h; AFFILIATE_ADMIN and ADMIN last 1h.';
 
 -- Telegram redelivers a webhook update on timeout/5xx, and a double-tapped
 -- inline button can arrive as two independent callback_query updates.
 -- idempotency_key covers both: pass update_id (as text) for update-level
 -- dedupe, or callback_query.id for the finer-grained SQLite
--- processed_callbacks behavior this replaces -- insert here (on conflict do
--- nothing -> already processed) before any side effect.
+-- processed_callbacks behavior this replaces. Mark successful handling only
+-- after its side effects complete so a handler failure remains retryable.
 create table public.mag_telegram_processed_updates (
   idempotency_key text primary key,
   kind text not null check (kind in ('UPDATE', 'CALLBACK')),

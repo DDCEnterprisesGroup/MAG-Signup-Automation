@@ -5,7 +5,7 @@
  * (service-role) Supabase client, so this module has no Deno-specific
  * imports and is unit-testable under Node. */
 
-export type SessionScope = "CUSTOMER_ORDER" | "AFFILIATE_ADMIN";
+export type SessionScope = "CUSTOMER_ORDER" | "AFFILIATE_ADMIN" | "ADMIN";
 
 export interface TelegramSession {
   telegramUserId: number;
@@ -18,7 +18,7 @@ export interface TelegramSession {
   lastUpdateId: number | null;
 }
 
-const SCOPE_TTL_HOURS: Record<SessionScope, number> = { CUSTOMER_ORDER: 24, AFFILIATE_ADMIN: 1 };
+const SCOPE_TTL_HOURS: Record<SessionScope, number> = { CUSTOMER_ORDER: 24, AFFILIATE_ADMIN: 1, ADMIN: 1 };
 
 function fromRow(row: Record<string, unknown> | null): TelegramSession | null {
   if (!row) return null;
