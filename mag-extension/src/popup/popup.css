@@ -1,0 +1,41 @@
+:root { color-scheme: light; font: 14px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; }
+* { box-sizing: border-box; }
+body { margin: 0; width: 390px; max-height: 600px; background: #f5f7fb; }
+header { display: flex; align-items: center; gap: 12px; padding: 16px 18px; background: #102454; color: white; }
+.brand { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: #f8b84e; color: #102454; font-weight: 900; letter-spacing: .04em; }
+h1, h2, p { margin: 0; }
+h1 { font-size: 17px; }
+header p { color: #d6def4; font-size: 12px; }
+main { padding: 14px; overflow-y: auto; max-height: 495px; }
+section { padding: 14px; margin-bottom: 12px; background: white; border: 1px solid #dfe4ef; border-radius: 12px; box-shadow: 0 2px 7px rgba(24,39,75,.05); }
+.section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #59657d; }
+select, button { font: inherit; }
+select { width: 100%; padding: 10px; border: 1px solid #b9c2d3; border-radius: 8px; background: white; }
+button { border: 0; border-radius: 8px; padding: 10px 12px; cursor: pointer; font-weight: 700; }
+button:focus-visible, select:focus-visible { outline: 3px solid #70a0ff; outline-offset: 2px; }
+.actions { display: grid; grid-template-columns: 1fr 1.5fr; gap: 8px; }
+.primary { background: #2457d6; color: white; }
+.secondary { background: #e7ecf7; color: #18315f; }
+.reset { width: 100%; background: transparent; color: #536078; border: 1px solid #c8d0df; }
+.link { padding: 2px; background: transparent; color: #2457d6; font-size: 12px; }
+.pill { padding: 4px 8px; border-radius: 99px; font-size: 11px; font-weight: 800; }
+.pill.ok { color: #176330; background: #dff4e6; }
+.pill.neutral { color: #5c6473; background: #edf0f5; }
+.counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.counts div { padding: 9px 6px; text-align: center; border-radius: 8px; background: #f5f7fb; }
+.counts strong, .counts span { display: block; }
+.counts strong { font-size: 20px; }
+.counts span { font-size: 11px; color: #667085; }
+.issue { padding: 10px 0; border-top: 1px solid #e6e9f0; }
+.issue:first-child { border-top: 0; padding-top: 0; }
+.issue-head { display: flex; justify-content: space-between; gap: 8px; }
+.issue-label { font-weight: 800; overflow-wrap: anywhere; }
+.confidence { font-size: 10px; font-weight: 800; color: #9a5b00; }
+.issue p { color: #626c80; font-size: 12px; margin: 4px 0 8px; }
+.small { color: #667085; font-size: 12px; margin-bottom: 9px; }
+.value { padding: 7px; border-radius: 6px; background: #fff7e6; font-size: 12px; max-height: 72px; overflow: auto; overflow-wrap: anywhere; }
+.mini-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.mini-actions button { padding: 5px 8px; font-size: 11px; background: #edf1f7; color: #243653; }
+#message { min-height: 24px; padding: 0 4px 8px; color: #7a3511; font-size: 12px; }
+footer { padding: 10px 16px; border-top: 1px solid #dde2ec; background: #fff8e6; color: #623e00; font-size: 11px; font-weight: 700; }

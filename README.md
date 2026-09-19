@@ -1,4 +1,12 @@
-# MAG Signup Automation
+# MAG
+
+> **Current V1 direction:** MAG is now a human-reviewed browser autofill assistant. The working Manifest V3 extension is in [`mag-extension/`](mag-extension/README.md). It never submits forms; the user performs the final submission action.
+>
+> The workbook-driven automation described below is retained as legacy code for migration and operational continuity. It is not used by the extension and includes behavior, including automatic final actions, that is outside the current product direction.
+
+MAG V1.1 adds the Supabase shared-data and approval layer without changing that V1 browser safety model. See [MAG V1.1 architecture and operations](docs/MAG_V1_1.md) and the [legacy migration report](docs/LEGACY_MIGRATION_2026-09-17.md). The extension remains local/client-side; Supabase supplies Auth, RLS-protected approved profiles, a dynamic field registry, versioning, auditing, and on-demand restricted-value access. The order-bot adapter is in `integrations/order-bot/`.
+
+## Legacy: MAG Signup Automation
 
 MAG Automation v1.1.1 is a local, workbook-driven, browser-assisted signup framework for Windows and macOS. It reads approved profile values and target sites from an Excel workbook, fills fields only when the match and page context are confident, checkpoints every Person ID + Site ID attempt, and resumes without repeating completed registrations.
 

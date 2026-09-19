@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MAG Autofill Assistant</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="brand">MAG</div>
+    <div><h1>Autofill Assistant</h1><p>Review first. You submit.</p></div>
+  </header>
+
+  <main>
+    <section aria-labelledby="connection-heading">
+      <div class="section-title"><h2 id="connection-heading">Connection</h2><span id="connection" class="pill neutral">Checking…</span></div>
+      <p id="sync-meta" class="small">Local profiles are available offline.</p>
+      <div class="actions"><button id="sync" class="secondary">Sync profiles</button><button id="logout" class="link" hidden>Log out</button></div>
+    </section>
+    <section aria-labelledby="profile-heading">
+      <div class="section-title"><h2 id="profile-heading">Current profile</h2><button id="settings" class="link">Settings</button></div>
+      <select id="profile" aria-label="Choose profile"></select>
+    </section>
+
+    <section aria-labelledby="status-heading">
+      <div class="section-title"><h2 id="status-heading">Form status</h2><span id="detected" class="pill neutral">Checking…</span></div>
+      <div class="actions">
+        <button id="analyze" class="secondary">Analyze</button>
+        <button id="autofill" class="primary">Autofill safe fields</button>
+      </div>
+      <div class="counts" aria-live="polite">
+        <div><strong id="filled">0</strong><span>Filled</span></div>
+        <div><strong id="review">0</strong><span>Review</span></div>
+        <div><strong id="missing">0</strong><span>Missing</span></div>
+      </div>
+    </section>
+
+    <section id="issues-section" aria-labelledby="issues-heading" hidden>
+      <h2 id="issues-heading">Review issues</h2>
+      <div id="issues"></div>
+    </section>
+
+    <div id="message" role="status"></div>
+    <button id="reset" class="reset">Reset MAG changes</button>
+  </main>
+
+  <footer>MAG never submits forms. Complete review, then submit on the webpage yourself.</footer>
+  <script src="../shared/constants.js"></script>
+  <script src="../data/initial-profiles.js"></script>
+  <script src="../shared/storage.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+body { max-width: 760px; margin: 32px auto; padding: 0 20px 80px; color: #172033; font: 16px/1.45 system-ui, sans-serif; }
+form { display: grid; gap: 14px; }
+label, fieldset { display: grid; gap: 5px; }
+input, textarea, select, button, [contenteditable] { padding: 9px; border: 1px solid #8792a8; border-radius: 5px; font: inherit; }
+textarea { min-height: 100px; }
+fieldset label { display: block; }
+button { background: #173f98; color: white; cursor: pointer; }
+.note { padding: 10px; background: #fff5d6; }

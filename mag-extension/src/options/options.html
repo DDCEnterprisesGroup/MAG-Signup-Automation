@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MAG Settings & Profiles</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header><div class="brand">MAG</div><div><h1>Settings & Profiles</h1><p>Approved shared profiles plus a safe local cache.</p></div></header>
+  <main>
+    <section>
+      <h2>MAG account</h2>
+      <p id="auth-status" class="hint">Checking connection…</p>
+      <div id="login-form">
+        <label>Email <input id="email" type="email" autocomplete="username"></label>
+        <label>Password <input id="password" type="password" autocomplete="current-password"></label>
+        <button id="login" class="primary">Sign in</button>
+      </div>
+      <div class="row"><button id="sync">Sync approved profiles</button><button id="logout" hidden>Log out</button></div>
+      <p class="hint">Authentication is kept for this browser session. Restricted values require a current MFA-authenticated session and a separate Fill approval.</p>
+    </section>
+    <section>
+      <h2>Autofill behavior</h2>
+      <label>Automatic fill threshold
+        <select id="threshold">
+          <option value="HIGH">High confidence only (recommended)</option>
+          <option value="MEDIUM">Medium and high; medium stays highlighted</option>
+        </select>
+      </label>
+      <label class="check"><input id="preserve" type="checkbox"> Preserve existing page values</label>
+      <label class="check"><input id="debug" type="checkbox"> Keep local debug logs (last 200 events)</label>
+      <button id="save-settings" class="primary">Save settings</button>
+    </section>
+
+    <section>
+      <div class="section-head"><h2>Profile editor</h2><div><button id="new-profile">New</button><button id="delete-profile" class="danger">Delete</button></div></div>
+      <label>Profile <select id="profile"></select></label>
+      <p class="hint">Local/internal profiles can be edited here. Synced Supabase profiles are read-only; update and approve them in MAG, then sync.</p>
+      <label>Profile JSON <textarea id="editor" spellcheck="false"></textarea></label>
+      <div class="row"><button id="save-profile" class="primary">Save profile</button><button id="reset-seed">Restore initial profiles</button></div>
+    </section>
+
+    <section>
+      <h2>Import / export</h2>
+      <p class="hint">Exports contain business/public profile data and settings. Review files before sharing. Never add passwords, card data, SSNs, tax records, or client records.</p>
+      <div class="row"><button id="export">Export profiles</button><label class="file">Import profiles<input id="import" type="file" accept="application/json,.json"></label></div>
+    </section>
+    <div id="message" role="status"></div>
+  </main>
+  <script src="../shared/constants.js"></script>
+  <script src="../data/initial-profiles.js"></script>
+  <script src="../shared/storage.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

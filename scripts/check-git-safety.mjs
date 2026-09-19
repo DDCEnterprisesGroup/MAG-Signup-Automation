@@ -20,7 +20,7 @@ try {
 }
 
 const forbiddenPath = /(^|\/)(data|logs|screenshots|runtime|backups|browser-profiles|user-data|user-data-dir|profile-data)(\/|$)|\.xls[mx]$|(^|\/)\.env$|\.(pem|key|pfx|p12)$|credentials.*\.json$|secrets.*\.json$/i;
-const secretPattern = /(?:password|secret|api[_-]?key|access[_-]?token|private[_-]?key)\s*[:=]\s*["'](?!\[?REDACTED|<|$)([^"']{6,})["']/i;
+const secretPattern = /(?:password|secret|api[_-]?key|access[_-]?token|private[_-]?key)\s*[:=]\s*["'](?!\[?REDACTED|<|env\(|$)([^"']{6,})["']/i;
 const violations = [];
 for (const relative of [...new Set(files)]) {
   const normalized = relative.replaceAll("\\", "/");

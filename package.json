@@ -21,6 +21,7 @@
     "handoffs": "tsx src/cli/handoffs.ts",
     "backup": "tsx src/cli/backup.ts",
     "restore": "tsx src/cli/restore.ts",
+    "migration:audit": "tsx src/cli/legacy-migration-audit.ts",
     "version": "tsx src/cli/version.ts",
     "safety:scan": "node scripts/check-git-safety.mjs",
     "validate:template": "tsx src/cli/validate-template.ts",
@@ -28,7 +29,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "test": "tsx --test --test-concurrency=1 tests/**/*.test.ts",
-    "check": "npm run typecheck && npm test && npm run build"
+    "test:extension": "npm --prefix mag-extension test",
+    "check": "npm run typecheck && npm test && npm run test:extension && npm run build"
   },
   "dependencies": {
     "jszip": "^3.10.1",
