@@ -126,6 +126,34 @@ test("browser fixtures exercise detection, mapping, review, reset, switching, an
       assert.equal(await page.evaluate(() => window.__magSubmitCount), 0);
     });
 
+    await context.test("structured person fields, aliases, derived values, phone, DOB, and authorized SSN fill in one action", async () => {
+      await load(page, baseUrl, "structured-person.html");
+      const result = await page.evaluate(() => MAG.AutofillEngine.autofill({
+        id: "supabase:person", label: "Rico Rollins", kind: "PERSON",
+        person: {
+          firstName: "Rico", lastName: "Rollins", fullName: "Rico Rollins",
+          email: "rico@example.com", phone: "(386) 555-0100", dateOfBirth: "01/31/1990",
+          addressLine1: "123 Main St", addressLine2: "Apt 4", city: "Orlando", state: "FL", zip: "32801",
+          fullAddress: "123 Main St, Apt 4, Orlando, FL, 32801"
+        }, sync: { source: "SUPABASE", remoteId: "person" }
+      }, MAG.DEFAULT_SETTINGS, { date_of_birth: "01/31/1990", ssn: "123456789" }));
+      assert.equal(await page.locator('[name="given_name"]').inputValue(), "Rico");
+      assert.equal(await page.locator('[name="middle_name"]').inputValue(), "");
+      assert.equal(await page.locator('[name="family_name"]').inputValue(), "Rollins");
+      assert.equal(await page.locator('[name="full_name"]').inputValue(), "Rico Rollins");
+      assert.equal(await page.locator('[name="mobile"]').inputValue(), "(386) 555-0100");
+      assert.equal(await page.locator('[name="dob"]').inputValue(), "1990-01-31");
+      assert.equal(await page.locator('#ssn').inputValue(), "123-45-6789");
+      assert.equal(await page.locator('[name="street"]').inputValue(), "123 Main St");
+      assert.equal(await page.locator('[name="unit"]').inputValue(), "Apt 4");
+      assert.equal(await page.locator('[name="city"]').inputValue(), "Orlando");
+      assert.equal(await page.locator('[name="state"]').inputValue(), "FL");
+      assert.equal(await page.locator('[name="postal"]').inputValue(), "32801");
+      assert.equal(await page.locator('[name="full_address"]').inputValue(), "123 Main St, Apt 4, Orlando, FL, 32801");
+      assert.ok(result.filled >= 13);
+      assert.equal(await page.evaluate(() => window.__magSubmitCount), 0);
+    });
+
     await context.test("contact, nonprofit, press/media, and ambiguous fixtures fail closed", async () => {
       await load(page, baseUrl, "nonprofit-submission.html");
       let result = await page.evaluate(() => {
