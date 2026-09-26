@@ -35,3 +35,6 @@ secrets*.json
 *.log
 .DS_Store
 Thumbs.db
+
+# Local repair backups (e.g. file.js.pre-auth-persist-20260926); never commit
+*.pre-*-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]
