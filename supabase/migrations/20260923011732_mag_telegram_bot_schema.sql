@@ -405,3 +405,4 @@ create policy mag_affiliate_commissions_staff_read on public.mag_affiliate_commi
 using ((select mag_private.is_staff()));
 create policy mag_affiliate_audit_admin_read on public.mag_affiliate_audit for select to authenticated
 using ((select mag_private.is_admin()));
+;

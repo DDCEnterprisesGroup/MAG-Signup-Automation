@@ -48,7 +48,7 @@ Write one `supabase/functions/_shared/session-store.ts` (load/save
 
 ## Postgres reconciliation map
 
-Migration: `supabase/migrations/20260919120000_mag_telegram_bot_schema.sql`.
+Migration: `supabase/migrations/20260923011732_mag_telegram_bot_schema.sql`.
 
 | SQLite table | Postgres | Status |
 |---|---|---|

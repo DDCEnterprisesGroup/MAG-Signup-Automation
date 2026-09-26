@@ -17,3 +17,4 @@ comment on column public.mag_customers.external_customer_id is
   'Stable identity from the named intake source; never a customer name or email.';
 comment on column public.mag_profiles.external_profile_id is
   'Stable profile identity within an order for idempotent intake retries.';
+;

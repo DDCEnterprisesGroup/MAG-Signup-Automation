@@ -4,3 +4,4 @@ select id, 'EVENT', 'INTERNAL', 'Christmas At The Magical Midway (2026)', 'ACTIV
 from public.mag_customers
 where scope = 'INTERNAL' and normalized_name = 'magical dream builders'
 on conflict (customer_id, profile_type, label) do nothing;
+;

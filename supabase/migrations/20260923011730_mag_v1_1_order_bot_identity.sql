@@ -64,3 +64,4 @@ $$;
 
 revoke all on function public.mag_revoke_service_membership(uuid) from public, anon, authenticated;
 grant execute on function public.mag_revoke_service_membership(uuid) to service_role;
+;

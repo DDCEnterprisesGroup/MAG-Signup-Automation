@@ -78,7 +78,7 @@ const basePayload = JSON.parse(readFileSync(new URL("./fixtures/mag-intake-valid
 const invalidPayload = JSON.parse(readFileSync(new URL("./fixtures/mag-intake-invalid.json", import.meta.url), "utf8"));
 
 test("database constraints use stable customer and profile identifiers", () => {
-  const migration = readFileSync(new URL("../supabase/migrations/20260919170054_mag_v1_1_external_identity.sql", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../supabase/migrations/20260923011733_mag_v1_1_external_identity.sql", import.meta.url), "utf8");
   assert.match(migration, /unique \(scope, external_customer_id\)/);
   assert.match(migration, /unique \(order_id, external_profile_id\)/);
   assert.match(migration, /drop constraint if exists mag_customers_scope_normalized_name_key/);

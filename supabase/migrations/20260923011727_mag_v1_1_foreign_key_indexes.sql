@@ -12,3 +12,4 @@ create index mag_profile_versions_changed_by_idx on public.mag_profile_versions(
 create index mag_profiles_order_idx on public.mag_profiles(order_id);
 create index mag_profiles_approved_by_idx on public.mag_profiles(approved_by);
 create index mag_profiles_created_by_idx on public.mag_profiles(created_by);
+;

@@ -510,3 +510,4 @@ select u.id, 'OWNER', coalesce(nullif(u.raw_user_meta_data->>'full_name',''), 'D
 from auth.users u
 where (select count(*) from auth.users) = 1
 on conflict (user_id) do nothing;
+;

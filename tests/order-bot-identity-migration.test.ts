@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const migrationPath = path.join(root, "supabase/migrations/20260917114149_mag_v1_1_order_bot_identity.sql");
+const migrationPath = path.join(root, "supabase/migrations/20260923011730_mag_v1_1_order_bot_identity.sql");
 
 async function readMigration(): Promise<string> {
   return readFile(migrationPath, "utf8");

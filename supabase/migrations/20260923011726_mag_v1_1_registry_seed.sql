@@ -86,3 +86,4 @@ where c.scope = 'CUSTOMER';
 
 revoke all on public.mag_customer_metrics from public, anon;
 grant select on public.mag_customer_metrics to authenticated;
+;
