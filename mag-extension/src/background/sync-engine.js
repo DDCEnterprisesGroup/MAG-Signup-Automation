@@ -19,34 +19,100 @@
       kind: row.profile_type,
       dynamicFields,
       ...(Object.keys(person).length ? { person } : {}),
-      sync: { source: "SUPABASE", remoteId: row.id, version: row.profile_version, updatedAt: row.updated_at, readOnly: true }
+      status: row.status,
+      sync: {
+        source: "SUPABASE",
+        remoteId: row.id,
+        version: row.profile_version,
+        updatedAt: row.updated_at,
+        status: row.status,
+        readOnly: true
+      }
     };
   }
 
-  async function sync() {
+  async function sync({ reason = "background" } = {}) {
     const [definitions, profiles, stored] = await Promise.all([
       MAG.SupabaseClient.rest("mag_field_definitions?select=canonical_key,semantic_type,display_name,aliases,data_type,security_class,cache_policy,autofill_policy,review_requirement,active&active=eq.true"),
       MAG.SupabaseClient.rest("mag_profiles?select=id,label,profile_type,status,profile_scope,profile_version,updated_at&profile_scope=eq.CUSTOMER"),
       chrome.storage.local.get(MAG.Storage.KEYS.remoteProfiles)
     ]);
     const previous = stored[MAG.Storage.KEYS.remoteProfiles] || [];
-    const active = profiles.filter((row) => row.status === "ACTIVE");
-    const changedIds = active.filter((row) => previous.find((item) => item.sync?.remoteId === row.id)?.sync?.version !== row.profile_version).map((row) => row.id);
+    // Keep workflow-visible customer profiles in the local remote cache.
+    // ARCHIVED records are intentionally excluded.
+    //
+    // Visibility and autofill eligibility are separate concerns. A profile may
+    // be visible in MAG while still requiring review before it can autofill.
+    const syncable = profiles.filter((row) => row.status !== "ARCHIVED");
+
+    const changedIds = syncable
+      .filter((row) => {
+        const cached = previous.find(
+          (item) => item.sync?.remoteId === row.id
+        );
+
+        return (
+          !cached ||
+          cached.sync?.version !== row.profile_version ||
+          cached.sync?.updatedAt !== row.updated_at ||
+          cached.status !== row.status
+        );
+      })
+      .map((row) => row.id);
     let values = [];
     if (changedIds.length) {
       const encodedIds = changedIds.map((id) => `\"${id}\"`).join(",");
       values = await MAG.SupabaseClient.rest(`mag_profile_field_values?select=profile_id,value,validation_status,mag_field_definitions!inner(canonical_key,semantic_type,security_class,cache_policy,active)&profile_id=in.(${encodedIds})&validation_status=in.(VALID,NEEDS_REVIEW)&mag_field_definitions.security_class=eq.STANDARD&mag_field_definitions.cache_policy=eq.LOCAL&mag_field_definitions.active=eq.true`);
     }
-    const remote = active.map((row) => {
-      const cached = previous.find((item) => item.sync?.remoteId === row.id && item.sync?.version === row.profile_version);
+    const remote = syncable.map((row) => {
+      const cached = previous.find(
+        (item) =>
+          item.sync?.remoteId === row.id &&
+          item.sync?.version === row.profile_version &&
+          item.sync?.updatedAt === row.updated_at &&
+          item.status === row.status
+      );
+
       return cached || asProfile(row, values);
     });
     const localOnly = (await chrome.storage.local.get(MAG.Storage.KEYS.profiles))[MAG.Storage.KEYS.profiles] || [];
     const conflicts = remote.filter((candidate) => localOnly.some((item) => item.id === candidate.id)).map((item) => item.id);
-    await MAG.Storage.replaceRemoteCache(remote.filter((candidate) => !conflicts.includes(candidate.id)), definitions, { status: "SUCCESS", conflicts, activeProfiles: remote.length });
+    const activeCount = remote.filter((profile) => profile.status === "ACTIVE").length;
+    const removedProfiles = previous.filter((item) => !syncable.some((row) => row.id === item.sync?.remoteId)).length;
+
+    await MAG.Storage.replaceRemoteCache(
+      remote.filter((candidate) => !conflicts.includes(candidate.id)),
+      definitions,
+      {
+        status: "SUCCESS",
+        conflicts,
+        activeProfiles: activeCount,
+        syncedProfiles: remote.length,
+        updatedProfiles: changedIds.length,
+        removedProfiles
+      }
+    );
+    // Background syncs run every few minutes; audit only when the cache
+    // changed or a person asked for the sync. Audit failure never fails a sync.
     const auth = await MAG.SupabaseClient.status();
-    if (auth.user?.id) await MAG.SupabaseClient.rest("mag_audit_events", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ actor_id: auth.user.id, action: "EXTENSION_SYNC", entity_type: "PROFILE_CACHE", success: true, metadata: { active_profile_count: remote.length, updated_profile_count: changedIds.length, conflict_count: conflicts.length } }) });
-    return { activeProfiles: remote.length, updatedProfiles: changedIds.length, conflicts, lastSuccessfulSync: new Date().toISOString() };
+    if (auth.user?.id && (changedIds.length || removedProfiles || ["manual", "login"].includes(reason))) {
+      await MAG.SupabaseClient.rest("mag_audit_events", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ actor_id: auth.user.id, action: "EXTENSION_SYNC", entity_type: "PROFILE_CACHE", success: true, metadata: {
+        active_profile_count: activeCount,
+        synced_profile_count: remote.length,
+        updated_profile_count: changedIds.length,
+        removed_profile_count: removedProfiles,
+        conflict_count: conflicts.length,
+        trigger: reason
+      } }) }).catch(() => undefined);
+    }
+    return {
+      activeProfiles: activeCount,
+      syncedProfiles: remote.length,
+      updatedProfiles: changedIds.length,
+      removedProfiles,
+      conflicts,
+      lastSuccessfulSync: new Date().toISOString()
+    };
   }
 
   MAG.SyncEngine = Object.freeze({ sync });

@@ -32,8 +32,9 @@
 Automated coverage already in place and passing (`npm run test:extension`,
 17/17): Manifest V3 structure, no prohibited submission mechanism anywhere
 in the execution path (`.submit()`, `.requestSubmit()`, synthetic
-click/keyboard/submit events, `chrome.alarms`), storage/session-only auth
-tokens, restricted-value handling, and no privileged key or secret material
+click/keyboard/submit events; `chrome.alarms` is limited to the background
+profile-sync handler), persistent IndexedDB-vault auth tokens kept out of
+`chrome.storage`, restricted-value handling, and no privileged key or secret material
 in source. This was verified statically (manifest parses, every referenced
 JS file is syntactically valid, every manifest-referenced file exists) in
 addition to the test suite -- `chrome://extensions` itself is not

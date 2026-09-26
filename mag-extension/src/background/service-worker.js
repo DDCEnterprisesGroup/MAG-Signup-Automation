@@ -4,9 +4,13 @@ importScripts(
   "../shared/supabase-config.js", "supabase-client.js", "sync-engine.js"
 );
 
+const SYNC_ALARM = "mag-profile-sync";
 let profileRefreshPromise = null;
 
-async function refreshProfiles({ force = false } = {}) {
+// Single flight: overlapping triggers (startup, alarm, side panel, manual)
+// share one sync. Order is always: restore auth → refresh token if needed →
+// sync profiles → update cache state.
+async function refreshProfiles({ force = false, reason = "background" } = {}) {
   await MAG.Storage.ensureInitialized();
   if (!force && !(await MAG.Storage.isSyncStale())) {
     return { skipped: true, ...(await MAG.Storage.getSyncState()) };
@@ -14,11 +18,12 @@ async function refreshProfiles({ force = false } = {}) {
   if (profileRefreshPromise) return profileRefreshPromise;
   profileRefreshPromise = (async () => {
     try {
-      return { ...(await MAG.SyncEngine.sync()), offline: false };
+      await MAG.SupabaseClient.ensureValidSession();
+      return { ...(await MAG.SyncEngine.sync({ reason })), offline: false };
     } catch (error) {
       const state = await MAG.Storage.recordSyncFailure(error);
       // A failed refresh never replaces the last valid remoteProfiles cache.
-      return { offline: true, activeProfiles: state.activeProfiles || 0, lastSuccessfulSync: state.lastSuccessfulSync || null };
+      return { offline: true, lastErrorCode: state.lastErrorCode, activeProfiles: state.activeProfiles || 0, syncedProfiles: state.syncedProfiles || 0, lastSuccessfulSync: state.lastSuccessfulSync || null };
     } finally {
       profileRefreshPromise = null;
     }
@@ -26,21 +31,41 @@ async function refreshProfiles({ force = false } = {}) {
   return profileRefreshPromise;
 }
 
-function startBackgroundRefresh() {
-  refreshProfiles().catch(() => undefined);
+function startBackgroundRefresh(options) {
+  refreshProfiles(options).catch(() => undefined);
 }
+
+// Periodic background sync. Alarms persist across worker suspension; this
+// re-creates the alarm only if it is missing (fresh install, reload, update).
+async function ensureSyncAlarm() {
+  if (!chrome.alarms) return;
+  const existing = await chrome.alarms.get(SYNC_ALARM);
+  if (!existing || existing.periodInMinutes !== MAG.SYNC_INTERVAL_MINUTES) {
+    await chrome.alarms.create(SYNC_ALARM, { delayInMinutes: MAG.SYNC_INTERVAL_MINUTES, periodInMinutes: MAG.SYNC_INTERVAL_MINUTES });
+  }
+}
+
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  // Quiet: no UI, no notifications, no logout on a failed scheduled sync.
+  if (alarm.name === SYNC_ALARM) startBackgroundRefresh({ force: true, reason: "background" });
+});
 
 chrome.runtime.onInstalled.addListener(async () => {
   await MAG.Storage.ensureInitialized();
   await chrome.action.setBadgeBackgroundColor({ color: "#2457d6" });
-  startBackgroundRefresh();
+  await ensureSyncAlarm().catch(() => undefined);
+  // Install/update/reload keeps the persisted session; no forced logout.
+  startBackgroundRefresh({ force: true, reason: "background" });
 });
 
 chrome.runtime.onStartup?.addListener(() => {
   // Local profiles are available immediately; this is an authenticated,
   // best-effort refresh and must never block extension startup.
-  startBackgroundRefresh();
+  ensureSyncAlarm().catch(() => undefined);
+  startBackgroundRefresh({ force: true, reason: "background" });
 });
+
+ensureSyncAlarm().catch(() => undefined);
 
 chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => undefined);
 
@@ -69,6 +94,18 @@ async function autofillActiveTab() {
   const profiles = await MAG.Storage.getProfiles();
   const profile = profiles.find((item) => item.id === selectedId);
   if (!profile) throw new Error("Choose a MAG profile in the side panel first.");
+
+  // Synced workflow profiles may be visible before approval, but only an
+  // ACTIVE Supabase profile is authorized for autofill.
+  if (
+    profile.sync?.source === "SUPABASE" &&
+    profile.status !== "ACTIVE"
+  ) {
+    throw new Error(
+      "This profile is not approved for autofill yet. Review and activate it in MAG first."
+    );
+  }
+
   const settings = await MAG.Storage.getSettings();
   const registry = await MAG.Storage.getFieldRegistry();
   const authorizedValues = profile.sync?.remoteId ? await authorizedValuesFor(profile) : {};
@@ -81,14 +118,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if ([MAG.MESSAGE.AUTH_STATUS, MAG.MESSAGE.AUTH_LOGIN, MAG.MESSAGE.AUTH_LOGOUT, MAG.MESSAGE.MFA_VERIFY, MAG.MESSAGE.AUDIT_EVENT, MAG.MESSAGE.SYNC_PROFILES, MAG.MESSAGE.RESTRICTED_UNLOCK].includes(message.type)) {
     (async () => {
       if (message.type === MAG.MESSAGE.AUTH_STATUS) return MAG.SupabaseClient.status();
-      if (message.type === MAG.MESSAGE.AUTH_LOGIN) return MAG.SupabaseClient.login(message.email, message.password);
+      if (message.type === MAG.MESSAGE.AUTH_LOGIN) {
+        const auth = await MAG.SupabaseClient.login(message.email, message.password);
+        // Signing in immediately syncs; the user never has to press Sync. A sync
+        // already in flight started signed out, so wait for it and run fresh.
+        if (profileRefreshPromise) await profileRefreshPromise;
+        return { ...auth, sync: await refreshProfiles({ force: true, reason: "login" }) };
+      }
       if (message.type === MAG.MESSAGE.AUTH_LOGOUT) {
         await MAG.Storage.setSessionProfile("");
         return MAG.SupabaseClient.logout();
       }
       if (message.type === MAG.MESSAGE.MFA_VERIFY) return MAG.SupabaseClient.verifyMfa(message.code);
       if (message.type === MAG.MESSAGE.AUDIT_EVENT) return MAG.SupabaseClient.audit(message.action, message.entityId, message.fieldCanonicalKey);
-      if (message.type === MAG.MESSAGE.SYNC_PROFILES) return refreshProfiles({ force: Boolean(message.force) });
+      if (message.type === MAG.MESSAGE.SYNC_PROFILES) return refreshProfiles({ force: Boolean(message.force), reason: message.force ? "manual" : "panel" });
       if (message.type === MAG.MESSAGE.RESTRICTED_UNLOCK) {
         if (!MAG.RESTRICTED_AUTOFILL_ENABLED) throw new Error("RESTRICTED_AUTOFILL_DISABLED");
         return MAG.SupabaseClient.invoke(MAG.SUPABASE.restrictedFunction, { profileId: message.profileId, canonicalKey: message.canonicalKey });

@@ -102,18 +102,22 @@
   });
   elements.login.addEventListener("click", async () => {
     try {
-      await background({ type: MAG.MESSAGE.AUTH_LOGIN, email: elements.email.value.trim(), password: elements.password.value });
+      const auth = await background({ type: MAG.MESSAGE.AUTH_LOGIN, email: elements.email.value.trim(), password: elements.password.value });
       elements.password.value = "";
       await renderAuth();
-      notify("Signed in. Choose Sync approved profiles.");
+      profiles = await MAG.Storage.getProfiles();
+      renderProfileList(profiles[0]?.id);
+      notify(auth.sync?.offline ? "Signed in. Profile sync is temporarily unavailable; MAG will retry automatically." : `Signed in and synced ${auth.sync?.syncedProfiles ?? 0} profiles (${auth.sync?.activeProfiles ?? 0} active). MAG stays signed in and syncs automatically.`);
     } catch (error) { elements.password.value = ""; notify(error.message, true); }
   });
   elements.sync.addEventListener("click", async () => {
     try {
-      const result = await background({ type: MAG.MESSAGE.SYNC_PROFILES });
+      const result = await background({ type: MAG.MESSAGE.SYNC_PROFILES, force: true });
       profiles = await MAG.Storage.getProfiles();
       renderProfileList(profiles[0]?.id);
-      notify(`Sync complete: ${result.activeProfiles} active profiles; ${result.conflicts.length} conflicts retained locally.`);
+      await renderAuth();
+      if (result.offline) notify(result.lastErrorCode === "AUTH_REQUIRED" ? "Your MAG session expired. Sign in again." : "Sync is temporarily unavailable. Cached profiles were kept.", true);
+      else notify(`Sync complete: ${result.syncedProfiles ?? result.activeProfiles} profiles (${result.activeProfiles} active), ${result.updatedProfiles || 0} updated; ${(result.conflicts || []).length} conflicts retained locally.`);
     } catch (error) { notify(error.message, true); }
   });
   elements.logout.addEventListener("click", async () => {
@@ -131,6 +135,9 @@
       notify(`${profiles.length} profiles imported.`);
     } catch (error) { notify(error.message, true); }
     finally { elements.import.value = ""; }
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes[MAG.Storage.KEYS.authState]) renderAuth().catch(() => undefined);
   });
   initialize().catch((error) => notify(error.message, true));
 })();

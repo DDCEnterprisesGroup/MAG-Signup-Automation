@@ -85,8 +85,10 @@ test("incremental sync updates versions, adds profiles, removes inactive profile
   assert.equal(mock.memory.local.remoteProfiles.some((item) => item.id === "supabase:p2"), true, "a failed refresh must not erase the last valid cache");
 });
 
-test("authentication persists only in session storage and logout revokes the local session", async () => {
-  const mock = storageMock(); globalThis.chrome = mock.chrome; globalThis.MAG = {};
+test("authentication persists in the extension-only vault, never in chrome.storage, and logout revokes it", async () => {
+  const mock = storageMock(); globalThis.chrome = mock.chrome;
+  const vault = new Map();
+  globalThis.MAG = { AuthVault: { get: async (key) => vault.get(key), set: async (key, value) => { vault.set(key, structuredClone(value)); }, remove: async (key) => { vault.delete(key); } } };
   await load("src/shared/constants.js", "src/shared/supabase-config.js");
   MAG.SUPABASE = { ...MAG.SUPABASE, url: "https://maguat123.supabase.co", publishableKey: "sb_publishable_test" };
   const originalFetch = globalThis.fetch;
@@ -104,6 +106,8 @@ test("authentication persists only in session storage and logout revokes the loc
     await load("src/background/supabase-client.js");
     assert.equal((await MAG.SupabaseClient.login("dre@example.invalid", "<test-password>")).connected, true);
     assert.equal(JSON.stringify(mock.memory.local).includes("test-refresh"), false);
+    assert.equal(JSON.stringify(mock.memory.session).includes("test-refresh"), false);
+    assert.equal(vault.get("supabaseSession").refresh_token, "<test-refresh>", "session persists across browser restarts");
     assert.equal(JSON.stringify(mock.memory.session).includes("test-password"), false);
     await MAG.SupabaseClient.verifyMfa("123456");
     assert.equal(calls.some((call) => call.url.endsWith("/factors/factor-1/challenge")), true);
@@ -111,11 +115,12 @@ test("authentication persists only in session storage and logout revokes the loc
     assert.equal(JSON.stringify(mock.memory.session).includes("123456"), false);
     await MAG.SupabaseClient.logout();
     assert.equal((await MAG.SupabaseClient.status()).connected, false);
+    assert.equal(vault.size, 0, "no refresh token left behind after logout");
   } finally { globalThis.fetch = originalFetch; }
 });
 
 test("unconfigured and historical DDC projects fail closed before authentication", async () => {
-  const mock = storageMock(); globalThis.chrome = mock.chrome; globalThis.MAG = {};
+  const mock = storageMock(); globalThis.chrome = mock.chrome; globalThis.MAG = { AuthVault: { get: async () => null, set: async () => {}, remove: async () => {} } };
   await load("src/shared/constants.js", "src/shared/supabase-config.js", "src/background/supabase-client.js");
   const originalFetch = globalThis.fetch;
   let calls = 0;

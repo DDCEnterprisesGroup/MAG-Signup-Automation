@@ -3,7 +3,7 @@
   const MAG = (root.MAG = root.MAG || {});
   const KEYS = Object.freeze({
     profiles: "profiles", settings: "settings", domainProfiles: "domainProfiles", logs: "debugLogs",
-    remoteProfiles: "remoteProfiles", fieldRegistry: "fieldRegistry", syncState: "syncState"
+    remoteProfiles: "remoteProfiles", fieldRegistry: "fieldRegistry", syncState: "syncState", authState: "authState"
   });
   const SESSION_PROFILE_KEY = "magActiveProfileId";
   const DEFAULT_SYNC_STATE = Object.freeze({ lastSuccessfulSync: null, status: "NEVER", conflicts: [] });
@@ -96,33 +96,45 @@
     await chrome.storage.local.set({
       [KEYS.remoteProfiles]: clone(profiles),
       [KEYS.fieldRegistry]: clone(definitions),
-      [KEYS.syncState]: { ...state, status: "SUCCESS", lastSuccessfulSync: new Date().toISOString() }
+      [KEYS.syncState]: { ...state, status: "SUCCESS", lastAttemptAt: new Date().toISOString(), lastSuccessfulSync: new Date().toISOString() }
     });
   }
 
   async function getFieldRegistry() { return (await chrome.storage.local.get(KEYS.fieldRegistry))[KEYS.fieldRegistry] || []; }
   async function getSyncState() { return (await chrome.storage.local.get(KEYS.syncState))[KEYS.syncState] || { ...DEFAULT_SYNC_STATE }; }
 
-  async function isSyncStale(maxAgeMs = 15 * 60 * 1000) {
+  // Matches the background alarm cadence, so opening MAG right after a
+  // periodic sync does not repeat it.
+  async function isSyncStale(maxAgeMs = MAG.SYNC_INTERVAL_MINUTES * 60 * 1000) {
     const state = await getSyncState();
     if (state.status === "OFFLINE" || !state.lastSuccessfulSync) return true;
     const lastSuccessful = Date.parse(state.lastSuccessfulSync);
     return !Number.isFinite(lastSuccessful) || Date.now() - lastSuccessful >= maxAgeMs;
   }
 
+  function errorCode(error) {
+    if (["AUTH_REQUIRED", "AUTH_INVALID"].includes(error?.code)) return "AUTH_REQUIRED";
+    if (["OFFLINE", "SYNC_UNAVAILABLE"].includes(error?.code)) return error.code;
+    const reason = String(error?.message || "").toLowerCase();
+    return reason.includes("sign in") || reason.includes("session") ? "AUTH_REQUIRED" : "SYNC_UNAVAILABLE";
+  }
+
   async function recordSyncFailure(error) {
     const current = await getSyncState();
-    const reason = String(error?.message || "").toLowerCase();
-    const lastErrorCode = reason.includes("sign in") || reason.includes("session") ? "AUTH_REQUIRED" : "SYNC_UNAVAILABLE";
     const state = {
       ...current,
       status: "OFFLINE",
       lastAttemptAt: new Date().toISOString(),
-      lastErrorCode
+      lastErrorCode: errorCode(error)
     };
     await chrome.storage.local.set({ [KEYS.syncState]: state });
     return state;
   }
+
+  // Token-free auth metadata (signed in, user, expiry) for extension pages.
+  // The tokens themselves live only in the service worker's IndexedDB vault.
+  async function setAuthState(state) { await chrome.storage.local.set({ [KEYS.authState]: { ...state, updatedAt: new Date().toISOString() } }); }
+  async function getAuthState() { return (await chrome.storage.local.get(KEYS.authState))[KEYS.authState] || { connected: false }; }
 
   async function setSessionProfile(profileId) {
     if (!chrome.storage.session) return;
@@ -135,5 +147,5 @@
     return (await chrome.storage.session.get(SESSION_PROFILE_KEY))[SESSION_PROFILE_KEY] || "";
   }
 
-  MAG.Storage = Object.freeze({ ensureInitialized, getProfiles, saveProfiles, validateProfiles, getSettings, saveSettings, rememberDomainProfile, getDomainProfile, appendLog, validateRemoteCache, replaceRemoteCache, getFieldRegistry, getSyncState, isSyncStale, recordSyncFailure, setSessionProfile, getSessionProfile, KEYS });
+  MAG.Storage = Object.freeze({ ensureInitialized, getProfiles, saveProfiles, validateProfiles, getSettings, saveSettings, rememberDomainProfile, getDomainProfile, appendLog, validateRemoteCache, replaceRemoteCache, getFieldRegistry, getSyncState, isSyncStale, recordSyncFailure, setAuthState, getAuthState, setSessionProfile, getSessionProfile, KEYS });
 })(globalThis);

@@ -41,12 +41,12 @@ try {
     const profiles = await MAG.Storage.getProfiles();
     const profile = profiles.find((item) => item.id === `supabase:${profileId}`);
     const state = await MAG.Storage.getSyncState();
-    const session = await chrome.storage.session.get("magSupabaseSession");
+    const auth = await MAG.SupabaseClient.status();
     const keys = Object.keys(profile?.dynamicFields || {}).sort();
     const valuesPresent = Object.values(profile?.dynamicFields || {}).every((value) => typeof value === "string" && value.trim().length > 0);
     const prohibited = keys.filter((key) => /ssn|social|tax|bank|routing|card|birth|password|credential/i.test(key));
     return {
-      authenticated: Boolean(session.magSupabaseSession?.access_token),
+      authenticated: auth.connected,
       exactProfileFound: Boolean(profile),
       source: profile?.sync?.source,
       version: profile?.sync?.version,

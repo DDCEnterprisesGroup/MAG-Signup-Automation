@@ -5,6 +5,8 @@
   MAG.VERSION = "1.1.0";
   // Keep retrieval and filling closed until Dre completes live AAL2 acceptance.
   MAG.RESTRICTED_AUTOFILL_ENABLED = false;
+  // Background profile sync cadence (chrome.alarms) and cache staleness window.
+  MAG.SYNC_INTERVAL_MINUTES = 5;
   MAG.SEMANTIC_TYPES = Object.freeze([
     "CONTACT_NAME", "FIRST_NAME", "MIDDLE_NAME", "LAST_NAME", "EMAIL", "PHONE", "ORGANIZATION",
     "WEBSITE", "ADDRESS", "ADDRESS_LINE_1", "ADDRESS_LINE_2", "FULL_ADDRESS", "CITY", "STATE", "ZIP", "DATE_OF_BIRTH", "SOCIAL_SECURITY_NUMBER", "EVENT_NAME", "EVENT_DATE",

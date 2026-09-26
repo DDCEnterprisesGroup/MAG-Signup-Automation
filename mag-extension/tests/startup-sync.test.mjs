@@ -24,7 +24,8 @@ test("browser startup triggers a best-effort refresh without blocking the local 
       KEYS: { remoteProfiles: "remoteProfiles" }
     },
     SyncEngine: { async sync() { syncCalls += 1; return { activeProfiles: 1 }; } },
-    SupabaseClient: {},
+    SupabaseClient: { async ensureValidSession() { return { access_token: "x" }; } },
+    SYNC_INTERVAL_MINUTES: 5,
     MESSAGE: { AUTH_STATUS: "AUTH_STATUS", AUTH_LOGIN: "AUTH_LOGIN", AUTH_LOGOUT: "AUTH_LOGOUT", MFA_VERIFY: "MFA_VERIFY", AUDIT_EVENT: "AUDIT_EVENT", SYNC_PROFILES: "SYNC_PROFILES", RESTRICTED_UNLOCK: "RESTRICTED_UNLOCK", FORM_DETECTED: "FORM_DETECTED" },
     SUPABASE: {},
     RESTRICTED_AUTOFILL_ENABLED: false

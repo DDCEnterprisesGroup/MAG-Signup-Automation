@@ -16,7 +16,7 @@ The content script runs in Chromium’s isolated world. It never inserts a submi
 - `src/adapters/site-adapters.js` — optional hostname/path/selector mappings layered above the generic classifier. Adapters cannot submit.
 - `src/shared/storage.js` — local/internal profiles, STANDARD-only remote cache validation, registry metadata, sync state, settings, per-domain profile, and capped debug logs.
 - `src/shared/dynamic-registry.js` — runtime aliases and security/autofill policy supplied by the approved registry.
-- `src/background/supabase-client.js` — Auth REST client with session-only tokens and refresh/logout.
+- `src/background/supabase-client.js` — Auth/session manager: persistent IndexedDB token vault (service worker only), proactive single-flight refresh with refresh-token rotation, error classification (AUTH_REQUIRED / OFFLINE / SYNC_UNAVAILABLE), local-scope logout. All REST/Edge calls get their token here.
 - `src/background/sync-engine.js` — version comparison, changed-profile value retrieval, deactivation/revocation cleanup, and read-only cache construction.
 - `src/background/service-worker.js` — initialization, detection badge, Auth/sync coordination, and restricted on-demand retrieval. It has no scheduling or form access.
 - `src/popup/*` — profile choice, analyze/autofill, summary, review actions, and reset.

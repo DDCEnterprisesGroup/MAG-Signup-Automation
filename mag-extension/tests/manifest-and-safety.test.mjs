@@ -22,7 +22,8 @@ test("Manifest V3 declares the modular extension execution path", async () => {
   assert.equal(manifest.side_panel.default_path, "src/sidepanel/sidepanel.html");
   assert.equal(manifest.commands["autofill-active-profile"].suggested_key.mac, "Command+Shift+Y");
   assert.equal(manifest.commands["autofill-active-profile"].suggested_key.default, "Ctrl+Shift+Y");
-  assert.equal(manifest.permissions.includes("alarms"), false);
+  // alarms drives the quiet periodic profile sync only (see the scheduled-execution test).
+  assert.ok(manifest.permissions.includes("alarms"));
   assert.equal(manifest.permissions.includes("downloads"), false);
   for (const relative of [manifest.background.service_worker, manifest.side_panel.default_path, manifest.options_page, ...manifest.content_scripts[0].js]) {
     await readFile(path.join(root, relative));
@@ -59,13 +60,22 @@ test("extension execution path contains no prohibited submission mechanism", asy
     [/\.click\s*\(/, "programmatic click"],
     [/new\s+KeyboardEvent\b/, "keyboard simulation"],
     [/key\s*:\s*["']Enter["']/, "Enter simulation"],
-    [/dispatchEvent\s*\(\s*new\s+(?:SubmitEvent|MouseEvent|KeyboardEvent)/, "synthetic submit/click/key event"],
-    [/chrome\.alarms\b/, "scheduled execution"]
+    [/dispatchEvent\s*\(\s*new\s+(?:SubmitEvent|MouseEvent|KeyboardEvent)/, "synthetic submit/click/key event"]
   ];
   for (const file of files) {
     const source = await readFile(file, "utf8");
     for (const [pattern, label] of prohibited) assert.doesNotMatch(source, pattern, `${label} found in ${path.relative(root, file)}`);
   }
+});
+
+test("scheduled execution is limited to background profile sync", async () => {
+  const pageRoots = ["src/content", "src/core", "src/adapters", "src/popup", "src/options", "src/sidepanel"];
+  const pageFiles = (await Promise.all(pageRoots.map((entry) => filesUnder(path.join(root, entry))))).flat().filter((file) => file.endsWith(".js"));
+  for (const file of pageFiles) assert.doesNotMatch(await readFile(file, "utf8"), /chrome\.alarms\b/, `scheduled execution found in ${path.relative(root, file)}`);
+  const serviceWorker = await readFile(path.join(root, "src/background/service-worker.js"), "utf8");
+  const handler = serviceWorker.slice(serviceWorker.indexOf("onAlarm.addListener"), serviceWorker.indexOf("});", serviceWorker.indexOf("onAlarm.addListener")));
+  assert.match(handler, /startBackgroundRefresh/);
+  assert.doesNotMatch(handler, /autofill|tabs\.|sendMessage/i);
 });
 
 test("seed profiles contain only the six requested initial contexts and preserve unknowns", async () => {
