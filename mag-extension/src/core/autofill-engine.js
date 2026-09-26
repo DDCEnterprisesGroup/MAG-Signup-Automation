@@ -53,7 +53,7 @@
       semantic: record.classification.semantic,
       confidence: record.mapping.level,
       score: record.mapping.score,
-      value: record.mapping.value,
+      value: record.classification.protected ? "" : record.mapping.value,
       source: record.mapping.source,
       status: record.status,
       required: record.field.required,
@@ -79,19 +79,40 @@
     };
   }
 
-  function analyze(profile, settings = MAG.DEFAULT_SETTINGS) {
+  function authorizedValue(classification, field, authorizedValues) {
+    if (!classification?.canonicalKey || !authorizedValues) return "";
+    const raw = authorizedValues[classification.canonicalKey];
+    if (raw === undefined || raw === null || String(raw).trim() === "") return "";
+    const key = classification.canonicalKey;
+    if (key === "ssn") {
+      const digits = String(raw).replace(/\D/g, "");
+      return digits.length === 9 ? `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}` : String(raw);
+    }
+    if (key === "date_of_birth" && field.type === "date") {
+      const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(raw));
+      return match ? `${match[3]}-${match[1].padStart(2, "0")}-${match[2].padStart(2, "0")}` : String(raw);
+    }
+    return String(raw);
+  }
+
+  function analyze(profile, settings = MAG.DEFAULT_SETTINGS, authorizedValues = {}) {
     ensureStyles();
     records.clear();
     activeProfileId = profile?.id || "";
     const fields = MAG.FieldDetector.detect();
     for (const field of fields) {
       const classification = MAG.FieldClassifier.classify(field);
-      const mapping = MAG.ProfileMapper.map(field, classification, profile || {});
+      let mapping = MAG.ProfileMapper.map(field, classification, profile || {});
+      const authorized = authorizedValue(classification, field, authorizedValues);
+      if (authorized) mapping = { ...mapping, value: authorized, source: "authorized MAG session", score: 100, level: "HIGH", fits: true };
       const originalValue = MAG.FieldDetector.currentValue(field.element);
       let status = "REVIEW";
       let reason = "Review this suggestion.";
-      if (classification.protected) {
+      if (classification.protected && !authorized) {
         reason = classification.restricted ? "Restricted information requires re-authentication and explicit Fill approval." : "Human-controlled field. MAG will not fill it.";
+      } else if (authorized) {
+        status = "REVIEW";
+        reason = "Approved protected value hydrated for this authorized browser session.";
       } else if (!mapping.value) {
         status = field.required ? "MISSING" : "REVIEW";
         reason = field.required ? "Required field has no approved profile value." : "No approved profile value is stored.";
@@ -104,7 +125,7 @@
       } else {
         reason = `${mapping.level.toLowerCase()} confidence from ${classification.evidence.join(", ") || mapping.source}.`;
       }
-      const record = { field, classification, mapping, element: field.element, originalValue, status, reason, changedByMag: false };
+      const record = { field, classification, mapping, element: field.element, originalValue, status, reason, changedByMag: false, authorizationApproved: Boolean(authorized) };
       records.set(field.fieldId, record);
       setHighlight(record, status);
       if (!field.element.dataset.magObserved) {
@@ -124,7 +145,7 @@
   }
 
   function fillRecord(record, force = false, settings = MAG.DEFAULT_SETTINGS) {
-    if (!record || record.classification.protected || !record.mapping.value || !record.mapping.fits) return false;
+    if (!record || (record.classification.protected && !record.authorizationApproved) || !record.mapping.value || !record.mapping.fits) return false;
     if (record.field.disabled || record.field.readOnly) return false;
     if (!force && record.originalValue && settings.preserveExistingValues) return false;
     if (!setControlValue(record.element, record.mapping.value)) return false;
@@ -140,12 +161,12 @@
     return true;
   }
 
-  function autofill(profile, settings = MAG.DEFAULT_SETTINGS) {
+  function autofill(profile, settings = MAG.DEFAULT_SETTINGS, authorizedValues = {}) {
     restoreOwnedValues(profile?.id || "");
-    analyze(profile, settings);
+    analyze(profile, settings, authorizedValues);
     const threshold = MAG.CONFIDENCE[settings.autofillThreshold] ?? MAG.CONFIDENCE.HIGH;
     for (const record of records.values()) {
-      if (record.mapping.score >= threshold) fillRecord(record, false, settings);
+      if (record.authorizationApproved || record.mapping.score >= threshold) fillRecord(record, false, settings);
     }
     return summary();
   }

@@ -24,6 +24,19 @@
     return { value: shortest[1], fits: false, variant: shortest[0] };
   }
 
+  function combinedAddress(profile) {
+    const parts = [
+      first(profile, ["person.addressLine1", "person.address_line_1", "person.address"]),
+      first(profile, ["person.addressLine2", "person.address_line_2"]),
+      first(profile, ["person.city"]), first(profile, ["person.state"]), first(profile, ["person.zip"])
+    ].filter(Boolean);
+    return parts.join(", ");
+  }
+
+  function combinedName(profile) {
+    return [first(profile, ["person.firstName", "person.first_name"]), first(profile, ["person.middleName", "person.middle_name"]), first(profile, ["person.lastName", "person.last_name"])].filter(Boolean).join(" ");
+  }
+
   function valueFor(profile, semantic, field) {
     if (field?.canonicalKey && profile?.dynamicFields && Object.hasOwn(profile.dynamicFields, field.canonicalKey)) {
       const dynamic = profile.dynamicFields[field.canonicalKey];
@@ -31,9 +44,10 @@
       return { value: dynamic === undefined || dynamic === null ? "" : String(dynamic), source: `approved ${field.canonicalKey}` };
     }
     switch (semantic) {
-      case "CONTACT_NAME": return { value: first(profile, ["person.fullName", "event.contact.name"]), source: "person.fullName" };
-      case "FIRST_NAME": return { value: first(profile, ["person.firstName"]), source: "person.firstName" };
-      case "LAST_NAME": return { value: first(profile, ["person.lastName"]), source: "person.lastName" };
+      case "CONTACT_NAME": return { value: first(profile, ["person.fullName", "person.full_name", "event.contact.name"]) || combinedName(profile), source: "person.fullName" };
+      case "FIRST_NAME": return { value: first(profile, ["person.firstName", "person.first_name"]), source: "person.firstName" };
+      case "MIDDLE_NAME": return { value: first(profile, ["person.middleName", "person.middle_name"]), source: "person.middleName" };
+      case "LAST_NAME": return { value: first(profile, ["person.lastName", "person.last_name"]), source: "person.lastName" };
       case "EMAIL": return { value: first(profile, ["person.email", "event.contact.email", "organization.email"]), source: "approved email" };
       case "PHONE": return { value: first(profile, ["person.phone", "event.contact.phone", "organization.phone"]), source: "approved phone" };
       case "ORGANIZATION": return { value: first(profile, ["event.organizer", "organization.publicName", "organization.legalName"]), source: "organization name" };
@@ -41,10 +55,15 @@
         const isEvent = MAG.FieldClassifier.fieldContext(field).includes("event");
         return { value: first(profile, isEvent ? ["event.eventUrl", "organization.website", "person.website"] : ["organization.website", "person.website", "event.eventUrl"]), source: isEvent ? "event/organization URL" : "organization/person URL" };
       }
-      case "ADDRESS": return { value: first(profile, ["event.address", "organization.address", "person.address"]), source: "approved address" };
+      case "ADDRESS_LINE_1": return { value: first(profile, ["person.addressLine1", "person.address_line_1", "person.address", "event.address", "organization.address"]), source: "approved address line 1" };
+      case "ADDRESS_LINE_2": return { value: first(profile, ["person.addressLine2", "person.address_line_2"]), source: "approved address line 2" };
+      case "ADDRESS": return { value: first(profile, ["person.fullAddress", "person.full_address", "person.address", "event.address", "organization.address"]), source: "approved address" };
+      case "FULL_ADDRESS": return { value: first(profile, ["person.fullAddress", "person.full_address"]) || combinedAddress(profile), source: "derived full address" };
       case "CITY": return { value: first(profile, ["event.city", "organization.city", "person.city"]), source: "approved city" };
       case "STATE": return { value: first(profile, ["event.state", "organization.state", "person.state"]), source: "approved state" };
       case "ZIP": return { value: first(profile, ["event.zip", "organization.zip", "person.zip"]), source: "approved ZIP" };
+      case "DATE_OF_BIRTH": return { value: first(profile, ["person.dateOfBirth", "person.date_of_birth", "person.dob"]), source: "approved date of birth" };
+      case "SOCIAL_SECURITY_NUMBER": return { value: "", source: "authorized session value" };
       case "EVENT_NAME": return { value: first(profile, ["event.name"]), source: "event.name" };
       case "EVENT_DATE": return { value: first(profile, ["event.date"]), source: "event.date" };
       case "START_TIME": return { value: first(profile, ["event.startTime"]), source: "event.startTime" };

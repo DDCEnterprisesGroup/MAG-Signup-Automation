@@ -20,6 +20,15 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.type === MAG.MESSAGE.AUTOFILL && message.authorizedValues) {
+      try {
+        if (message.registry) MAG.DynamicRegistry.setDefinitions(message.registry);
+        sendResponse({ ok: true, summary: MAG.AutofillEngine.autofill(message.profile, message.settings, message.authorizedValues) });
+      } catch (error) {
+        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+      return false;
+    }
     try {
       if (message.registry) MAG.DynamicRegistry.setDefinitions(message.registry);
       if (message.type === MAG.MESSAGE.PING) sendResponse({ ok: true, ...detectionStatus(), summary: MAG.AutofillEngine.summary() });

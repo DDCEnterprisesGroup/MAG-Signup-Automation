@@ -5,6 +5,16 @@
   // Adapters supplement the generic classifier. They never control submission.
   const adapters = [
     {
+      id: "httpbin-form-uat",
+      hosts: ["httpbin.org"],
+      pathPattern: /^\/forms\/post\/?$/i,
+      mappings: {
+        '[name="custname"]': { semantic: "CONTACT_NAME" },
+        '[name="custtel"]': { semantic: "PHONE" },
+        '[name="custemail"]': { semantic: "EMAIL" }
+      }
+    },
+    {
       id: "mag-fixtures",
       hosts: ["127.0.0.1", "localhost"],
       pathPattern: /\/mag-fixtures\//i,
