@@ -70,8 +70,8 @@ test("incremental sync updates versions, adds profiles, removes inactive profile
     if (url.startsWith("mag_audit_events")) return null;
     assert.match(url, /profile_id=in/);
     return [
-      { profile_id: "p1", value: "Updated Co", validation_status: "VALID", mag_field_definitions: { canonical_key: "organization_name" } },
-      { profile_id: "p2", value: "New Co", validation_status: "VALID", mag_field_definitions: { canonical_key: "organization_name" } }
+      { profile_id: "p1", value: "Updated Co", validation_status: "VALID", mag_field_definitions: { canonical_key: "organization_name", semantic_type: "ORGANIZATION" } },
+      { profile_id: "p2", value: "New Co", validation_status: "VALID", mag_field_definitions: { canonical_key: "organization_name", semantic_type: "ORGANIZATION" } }
     ];
   } };
   await load("src/background/sync-engine.js");
@@ -82,11 +82,13 @@ test("incremental sync updates versions, adds profiles, removes inactive profile
   assert.equal(remote.find((item) => item.id === "supabase:p1").sync.version, 17);
   MAG.SupabaseClient.rest = async () => { throw new Error("offline"); };
   assert.equal((await MAG.Storage.getProfiles()).some((item) => item.id === "supabase:p2"), true);
+  assert.equal(mock.memory.local.remoteProfiles.some((item) => item.id === "supabase:p2"), true, "a failed refresh must not erase the last valid cache");
 });
 
 test("authentication persists only in session storage and logout revokes the local session", async () => {
   const mock = storageMock(); globalThis.chrome = mock.chrome; globalThis.MAG = {};
   await load("src/shared/constants.js", "src/shared/supabase-config.js");
+  MAG.SUPABASE = { ...MAG.SUPABASE, url: "https://maguat123.supabase.co", publishableKey: "sb_publishable_test" };
   const originalFetch = globalThis.fetch;
   const calls = [];
   const authSession = { access_token: "<test-access>", refresh_token: "<test-refresh>", expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: "u1", email: "dre@example.invalid", user_metadata: { full_name: "Dre" } } };
@@ -109,6 +111,21 @@ test("authentication persists only in session storage and logout revokes the loc
     assert.equal(JSON.stringify(mock.memory.session).includes("123456"), false);
     await MAG.SupabaseClient.logout();
     assert.equal((await MAG.SupabaseClient.status()).connected, false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("unconfigured and historical DDC projects fail closed before authentication", async () => {
+  const mock = storageMock(); globalThis.chrome = mock.chrome; globalThis.MAG = {};
+  await load("src/shared/constants.js", "src/shared/supabase-config.js", "src/background/supabase-client.js");
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; throw new Error("unexpected request"); };
+  try {
+    MAG.SUPABASE = { ...MAG.SUPABASE, url: "", publishableKey: "" };
+    await assert.rejects(MAG.SupabaseClient.login("test@example.invalid", "test"), /Dedicated MAG Supabase project is not configured/);
+    MAG.SUPABASE = { ...MAG.SUPABASE, url: "https://swsnttpchmxekbftcvlu.supabase.co", publishableKey: "sb_publishable_test" };
+    await assert.rejects(MAG.SupabaseClient.login("test@example.invalid", "test"), /Dedicated MAG Supabase project is not configured/);
+    assert.equal(calls, 0);
   } finally { globalThis.fetch = originalFetch; }
 });
 

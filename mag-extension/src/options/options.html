@@ -18,7 +18,7 @@
         <button id="login" class="primary">Sign in</button>
       </div>
       <div class="row"><button id="sync">Sync approved profiles</button><button id="logout" hidden>Log out</button></div>
-      <p class="hint">Authentication is kept for this browser session. Restricted values require a current MFA-authenticated session and a separate Fill approval.</p>
+      <p class="hint">Authentication is kept for this browser session. Protected values are hydrated only for an intentional authorized Autofill action.</p>
     </section>
     <section>
       <h2>Autofill behavior</h2>
@@ -38,7 +38,7 @@
       <label>Profile <select id="profile"></select></label>
       <p class="hint">Local/internal profiles can be edited here. Synced Supabase profiles are read-only; update and approve them in MAG, then sync.</p>
       <label>Profile JSON <textarea id="editor" spellcheck="false"></textarea></label>
-      <div class="row"><button id="save-profile" class="primary">Save profile</button><button id="reset-seed">Restore initial profiles</button></div>
+      <div class="row"><button id="save-profile" class="primary">Save profile</button></div>
     </section>
 
     <section>
@@ -49,7 +49,6 @@
     <div id="message" role="status"></div>
   </main>
   <script src="../shared/constants.js"></script>
-  <script src="../data/initial-profiles.js"></script>
   <script src="../shared/storage.js"></script>
   <script src="options.js"></script>
 </body>

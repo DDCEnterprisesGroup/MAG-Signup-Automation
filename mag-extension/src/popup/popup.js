@@ -39,6 +39,44 @@
     return profiles.find((profile) => profile.id === elements.profile.value);
   }
 
+  function renderProfileOptions(remembered = "") {
+    const selected = remembered || elements.profile.value;
+    elements.profile.replaceChildren();
+    for (const profile of profiles) {
+      const option = document.createElement("option");
+      option.value = profile.id;
+      option.textContent = profile.label;
+      elements.profile.append(option);
+    }
+    if (profiles.some((profile) => profile.id === selected)) elements.profile.value = selected;
+    if (elements.profile.value) MAG.Storage.setSessionProfile(elements.profile.value).catch(() => undefined);
+  }
+
+  function renderSyncState(syncState, result) {
+    if (result?.offline || syncState.status === "OFFLINE") {
+      elements.syncMeta.textContent = syncState.lastSuccessfulSync
+        ? `Using cached profiles offline · last sync ${new Date(syncState.lastSuccessfulSync).toLocaleString()}`
+        : "Profile sync unavailable. Cached profiles will be used when available.";
+      return;
+    }
+    elements.syncMeta.textContent = syncState.lastSuccessfulSync
+      ? `${syncState.activeProfiles || 0} active synced profiles · ${new Date(syncState.lastSuccessfulSync).toLocaleString()}`
+      : "Local profiles are available offline. Sign in under Settings to sync.";
+  }
+
+  async function refreshCachedProfiles(force = false) {
+    const result = await background({ type: MAG.MESSAGE.SYNC_PROFILES, force });
+    profiles = await MAG.Storage.getProfiles();
+    registry = await MAG.Storage.getFieldRegistry();
+    const remembered = await MAG.Storage.getSessionProfile() || (hostname ? await MAG.Storage.getDomainProfile(hostname) : "");
+    renderProfileOptions(remembered);
+    const syncState = await MAG.Storage.getSyncState();
+    renderSyncState(syncState, result);
+    if (!profiles.length) setMessage("No active customer profiles are available. Approve a CUSTOMER profile in MAG Admin, then sync.");
+    if (result?.offline) setMessage("Using the last valid profile cache; sync is currently unavailable.");
+    return result;
+  }
+
   function updateSummary(summary = {}) {
     latestSummary = summary;
     elements.filled.textContent = String(summary.filled || 0);
@@ -95,10 +133,12 @@
     const profile = activeProfile();
     if (!profile) throw new Error("Choose a profile first.");
     const settings = await MAG.Storage.getSettings();
-    const response = await send({ type: action, profile, settings, registry });
+    const response = action === MAG.MESSAGE.AUTOFILL
+      ? { data: await background({ type: MAG.MESSAGE.AUTOFILL_ACTIVE }) }
+      : await send({ type: action, profile, settings, registry });
     await MAG.Storage.rememberDomainProfile(hostname, profile.id);
-    updateSummary(response.summary);
-    setMessage(action === MAG.MESSAGE.AUTOFILL ? "Safe matches filled. Review every highlighted field before you submit." : "Analysis complete. No form action was taken.");
+    updateSummary(response.summary || response.data);
+    setMessage(action === MAG.MESSAGE.AUTOFILL ? `MAG filled ${response.data?.filled || response.summary?.filled || 0} field(s). Review before submitting.` : "Analysis complete. No form action was taken.");
   }
 
   async function initialize() {
@@ -111,22 +151,20 @@
       elements.connection.textContent = auth.connected ? `Connected as ${auth.user?.displayName || "MAG user"}` : "Local only";
       elements.connection.className = `pill ${auth.connected ? "ok" : "neutral"}`;
       elements.logout.hidden = !auth.connected;
-      elements.syncMeta.textContent = syncState.lastSuccessfulSync ? `${syncState.activeProfiles || 0} active synced profiles · ${new Date(syncState.lastSuccessfulSync).toLocaleString()}` : "Local profiles are available offline. Sign in under Settings to sync.";
+      renderSyncState(syncState);
       [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       hostname = tab?.url ? new URL(tab.url).hostname : "";
-      const remembered = hostname ? await MAG.Storage.getDomainProfile(hostname) : "";
-      for (const profile of profiles) {
-        const option = document.createElement("option");
-        option.value = profile.id;
-        option.textContent = profile.label;
-        elements.profile.append(option);
-      }
-      if (profiles.some((profile) => profile.id === remembered)) elements.profile.value = remembered;
+      const remembered = await MAG.Storage.getSessionProfile() || (hostname ? await MAG.Storage.getDomainProfile(hostname) : "");
+      renderProfileOptions(remembered);
+      if (!profiles.length) setMessage("No active customer profiles are available. Approve a CUSTOMER profile in MAG Admin, then sync.");
       const response = await send({ type: MAG.MESSAGE.PING });
       elements.detected.textContent = response.supported ? `${response.detected} fields` : "No form";
       elements.detected.className = `pill ${response.supported ? "ok" : "neutral"}`;
       updateSummary(response.summary);
       if (!response.supported) setMessage("No visible editable form fields were detected on this page.", true);
+      // Rendered cache is usable immediately. Refresh in the background when
+      // it is stale; a failed refresh leaves the cache and page controls live.
+      refreshCachedProfiles(false).catch(() => setMessage("Using the last valid profile cache; sync is currently unavailable."));
     } catch (error) {
       elements.detected.textContent = "Unavailable";
       setMessage(error instanceof Error ? error.message : String(error), true);
@@ -185,6 +223,7 @@
     } catch (error) { setMessage(error.message, true); }
   });
   elements.profile.addEventListener("change", () => {
+    MAG.Storage.setSessionProfile(elements.profile.value).catch(() => undefined);
     if (hostname) MAG.Storage.rememberDomainProfile(hostname, elements.profile.value).catch(() => undefined);
     setMessage("Profile selected. Choose Analyze or Autofill; the page has not been changed.");
   });
@@ -192,9 +231,8 @@
   elements.sync.addEventListener("click", async () => {
     try {
       elements.sync.disabled = true;
-      const result = await background({ type: MAG.MESSAGE.SYNC_PROFILES });
-      setMessage(`Sync complete: ${result.activeProfiles} active profiles.`);
-      setTimeout(() => location.reload(), 400);
+      const result = await refreshCachedProfiles(true);
+      if (!result?.offline) setMessage(`Sync complete: ${result.activeProfiles} active profiles.`);
     } catch (error) { setMessage(error.message, true); }
     finally { elements.sync.disabled = false; }
   });

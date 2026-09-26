@@ -1,6 +1,6 @@
 (function initializeOptions() {
   "use strict";
-  const elements = Object.fromEntries(["threshold", "preserve", "debug", "save-settings", "profile", "editor", "save-profile", "new-profile", "delete-profile", "reset-seed", "export", "import", "message", "auth-status", "login-form", "email", "password", "login", "sync", "logout"].map((id) => [id, document.getElementById(id)]));
+  const elements = Object.fromEntries(["threshold", "preserve", "debug", "save-settings", "profile", "editor", "save-profile", "new-profile", "delete-profile", "export", "import", "message", "auth-status", "login-form", "email", "password", "login", "sync", "logout"].map((id) => [id, document.getElementById(id)]));
   let profiles = [];
 
   function notify(text, error = false) {
@@ -9,8 +9,6 @@
     elements.message.style.background = error ? "#feeceb" : "#e8f5ec";
     elements.message.style.color = error ? "#a12119" : "#176330";
   }
-
-  function clone(value) { return JSON.parse(JSON.stringify(value)); }
 
   async function background(message) {
     const response = await chrome.runtime.sendMessage(message);
@@ -92,11 +90,6 @@
     profiles = profiles.filter((profile) => profile.id !== selected);
     await persistProfiles(profiles[0]?.id);
     notify("Profile deleted from local extension storage.");
-  });
-  elements["reset-seed"].addEventListener("click", async () => {
-    profiles = clone(MAG.INITIAL_PROFILES);
-    await persistProfiles(profiles[0]?.id);
-    notify("Initial profiles restored. Custom profiles were replaced.");
   });
   elements.export.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(profiles.filter((profile) => profile?.sync?.source !== "SUPABASE"), null, 2)], { type: "application/json" });

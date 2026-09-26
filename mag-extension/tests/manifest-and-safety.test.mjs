@@ -18,11 +18,36 @@ test("Manifest V3 declares the modular extension execution path", async () => {
   assert.equal(manifest.background.service_worker, "src/background/service-worker.js");
   assert.ok(manifest.content_scripts[0].js.length >= 8);
   assert.ok(manifest.permissions.includes("storage"));
+  assert.ok(manifest.permissions.includes("sidePanel"));
+  assert.equal(manifest.side_panel.default_path, "src/sidepanel/sidepanel.html");
+  assert.equal(manifest.commands["autofill-active-profile"].suggested_key.mac, "Command+Shift+Y");
+  assert.equal(manifest.commands["autofill-active-profile"].suggested_key.default, "Ctrl+Shift+Y");
   assert.equal(manifest.permissions.includes("alarms"), false);
   assert.equal(manifest.permissions.includes("downloads"), false);
-  for (const relative of [manifest.background.service_worker, manifest.action.default_popup, manifest.options_page, ...manifest.content_scripts[0].js]) {
+  for (const relative of [manifest.background.service_worker, manifest.side_panel.default_path, manifest.options_page, ...manifest.content_scripts[0].js]) {
     await readFile(path.join(root, relative));
   }
+});
+
+test("production execution path does not initialize or expose seed profiles", async () => {
+  const storage = await readFile(path.join(root, "src/shared/storage.js"), "utf8");
+  const serviceWorker = await readFile(path.join(root, "src/background/service-worker.js"), "utf8");
+  const options = await readFile(path.join(root, "src/options/options.html"), "utf8");
+  assert.doesNotMatch(storage, /INITIAL_PROFILES/);
+  assert.doesNotMatch(serviceWorker, /initial-profiles/);
+  assert.doesNotMatch(options, /initial-profiles|Restore initial profiles/);
+});
+
+test("startup and side-panel paths use the persistent cache and best-effort refresh", async () => {
+  const serviceWorker = await readFile(path.join(root, "src/background/service-worker.js"), "utf8");
+  const popup = await readFile(path.join(root, "src/popup/popup.js"), "utf8");
+  assert.match(serviceWorker, /chrome\.runtime\.onStartup/);
+  assert.match(serviceWorker, /MAG\.Storage\.isSyncStale/);
+  assert.match(serviceWorker, /MAG\.Storage\.recordSyncFailure/);
+  assert.match(serviceWorker, /last valid remoteProfiles cache/);
+  assert.match(popup, /refreshCachedProfiles\(false\)/);
+  assert.match(popup, /Using cached profiles offline/);
+  assert.match(popup, /refreshCachedProfiles\(true\)/);
 });
 
 test("extension execution path contains no prohibited submission mechanism", async () => {

@@ -3,11 +3,22 @@
   const MAG = (root.MAG = root.MAG || {});
 
   function asProfile(row, values) {
+    const approved = values.filter((item) => item.profile_id === row.id);
+    const dynamicFields = Object.fromEntries(approved.map((item) => [item.mag_field_definitions.canonical_key, item.value]));
+    const semanticValues = Object.fromEntries(approved.map((item) => [item.mag_field_definitions.semantic_type, item.value]));
+    const person = Object.fromEntries([
+      ["fullName", semanticValues.CONTACT_NAME || dynamicFields.full_name], ["firstName", semanticValues.FIRST_NAME || dynamicFields.first_name],
+      ["middleName", semanticValues.MIDDLE_NAME || dynamicFields.middle_name], ["lastName", semanticValues.LAST_NAME || dynamicFields.last_name], ["email", semanticValues.EMAIL || dynamicFields.business_email || dynamicFields.email],
+      ["phone", semanticValues.PHONE || dynamicFields.business_phone || dynamicFields.phone], ["address", semanticValues.ADDRESS || dynamicFields.address],
+      ["addressLine1", semanticValues.ADDRESS_LINE_1 || dynamicFields.address], ["addressLine2", semanticValues.ADDRESS_LINE_2 || dynamicFields.address_line_2],
+      ["fullAddress", semanticValues.FULL_ADDRESS || dynamicFields.full_address], ["city", semanticValues.CITY || dynamicFields.city], ["state", semanticValues.STATE || dynamicFields.state], ["zip", semanticValues.ZIP || dynamicFields.zip]
+    ].filter(([, value]) => value !== undefined && value !== null && String(value).trim()));
     return {
       id: `supabase:${row.id}`,
       label: row.label,
       kind: row.profile_type,
-      dynamicFields: Object.fromEntries(values.filter((item) => item.profile_id === row.id).map((item) => [item.mag_field_definitions.canonical_key, item.value])),
+      dynamicFields,
+      ...(Object.keys(person).length ? { person } : {}),
       sync: { source: "SUPABASE", remoteId: row.id, version: row.profile_version, updatedAt: row.updated_at, readOnly: true }
     };
   }
@@ -24,7 +35,7 @@
     let values = [];
     if (changedIds.length) {
       const encodedIds = changedIds.map((id) => `\"${id}\"`).join(",");
-      values = await MAG.SupabaseClient.rest(`mag_profile_field_values?select=profile_id,value,validation_status,mag_field_definitions!inner(canonical_key,security_class,cache_policy,active)&profile_id=in.(${encodedIds})&validation_status=in.(VALID,NEEDS_REVIEW)&mag_field_definitions.security_class=eq.STANDARD&mag_field_definitions.cache_policy=eq.LOCAL&mag_field_definitions.active=eq.true`);
+      values = await MAG.SupabaseClient.rest(`mag_profile_field_values?select=profile_id,value,validation_status,mag_field_definitions!inner(canonical_key,semantic_type,security_class,cache_policy,active)&profile_id=in.(${encodedIds})&validation_status=in.(VALID,NEEDS_REVIEW)&mag_field_definitions.security_class=eq.STANDARD&mag_field_definitions.cache_policy=eq.LOCAL&mag_field_definitions.active=eq.true`);
     }
     const remote = active.map((row) => {
       const cached = previous.find((item) => item.sync?.remoteId === row.id && item.sync?.version === row.profile_version);

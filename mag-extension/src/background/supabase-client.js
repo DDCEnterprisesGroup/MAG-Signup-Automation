@@ -4,6 +4,11 @@
   const SESSION_KEY = "magSupabaseSession";
 
   async function request(path, options = {}, token = "") {
+    if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/.test(MAG.SUPABASE.url || "") ||
+        MAG.SUPABASE.url === "https://swsnttpchmxekbftcvlu.supabase.co" ||
+        !MAG.SUPABASE.publishableKey?.startsWith("sb_publishable_")) {
+      throw new Error("Dedicated MAG Supabase project is not configured.");
+    }
     const response = await fetch(`${MAG.SUPABASE.url}${path}`, {
       ...options,
       cache: "no-store",

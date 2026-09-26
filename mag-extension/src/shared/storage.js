@@ -5,6 +5,8 @@
     profiles: "profiles", settings: "settings", domainProfiles: "domainProfiles", logs: "debugLogs",
     remoteProfiles: "remoteProfiles", fieldRegistry: "fieldRegistry", syncState: "syncState"
   });
+  const SESSION_PROFILE_KEY = "magActiveProfileId";
+  const DEFAULT_SYNC_STATE = Object.freeze({ lastSuccessfulSync: null, status: "NEVER", conflicts: [] });
 
   function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -13,12 +15,12 @@
   async function ensureInitialized() {
     const current = await chrome.storage.local.get([KEYS.profiles, KEYS.settings, KEYS.domainProfiles, KEYS.remoteProfiles, KEYS.fieldRegistry, KEYS.syncState]);
     const updates = {};
-    if (!Array.isArray(current[KEYS.profiles]) || current[KEYS.profiles].length === 0) updates[KEYS.profiles] = clone(MAG.INITIAL_PROFILES);
+    if (!Array.isArray(current[KEYS.profiles])) updates[KEYS.profiles] = [];
     if (!current[KEYS.settings]) updates[KEYS.settings] = { ...MAG.DEFAULT_SETTINGS };
     if (!current[KEYS.domainProfiles]) updates[KEYS.domainProfiles] = {};
     if (!Array.isArray(current[KEYS.remoteProfiles])) updates[KEYS.remoteProfiles] = [];
     if (!Array.isArray(current[KEYS.fieldRegistry])) updates[KEYS.fieldRegistry] = [];
-    if (!current[KEYS.syncState]) updates[KEYS.syncState] = { lastSuccessfulSync: null, status: "NEVER", conflicts: [] };
+    if (!current[KEYS.syncState]) updates[KEYS.syncState] = { ...DEFAULT_SYNC_STATE };
     if (Object.keys(updates).length) await chrome.storage.local.set(updates);
   }
 
@@ -99,7 +101,39 @@
   }
 
   async function getFieldRegistry() { return (await chrome.storage.local.get(KEYS.fieldRegistry))[KEYS.fieldRegistry] || []; }
-  async function getSyncState() { return (await chrome.storage.local.get(KEYS.syncState))[KEYS.syncState] || { status: "NEVER" }; }
+  async function getSyncState() { return (await chrome.storage.local.get(KEYS.syncState))[KEYS.syncState] || { ...DEFAULT_SYNC_STATE }; }
 
-  MAG.Storage = Object.freeze({ ensureInitialized, getProfiles, saveProfiles, validateProfiles, getSettings, saveSettings, rememberDomainProfile, getDomainProfile, appendLog, validateRemoteCache, replaceRemoteCache, getFieldRegistry, getSyncState, KEYS });
+  async function isSyncStale(maxAgeMs = 15 * 60 * 1000) {
+    const state = await getSyncState();
+    if (state.status === "OFFLINE" || !state.lastSuccessfulSync) return true;
+    const lastSuccessful = Date.parse(state.lastSuccessfulSync);
+    return !Number.isFinite(lastSuccessful) || Date.now() - lastSuccessful >= maxAgeMs;
+  }
+
+  async function recordSyncFailure(error) {
+    const current = await getSyncState();
+    const reason = String(error?.message || "").toLowerCase();
+    const lastErrorCode = reason.includes("sign in") || reason.includes("session") ? "AUTH_REQUIRED" : "SYNC_UNAVAILABLE";
+    const state = {
+      ...current,
+      status: "OFFLINE",
+      lastAttemptAt: new Date().toISOString(),
+      lastErrorCode
+    };
+    await chrome.storage.local.set({ [KEYS.syncState]: state });
+    return state;
+  }
+
+  async function setSessionProfile(profileId) {
+    if (!chrome.storage.session) return;
+    if (profileId) await chrome.storage.session.set({ [SESSION_PROFILE_KEY]: profileId });
+    else await chrome.storage.session.remove(SESSION_PROFILE_KEY);
+  }
+
+  async function getSessionProfile() {
+    if (!chrome.storage.session) return "";
+    return (await chrome.storage.session.get(SESSION_PROFILE_KEY))[SESSION_PROFILE_KEY] || "";
+  }
+
+  MAG.Storage = Object.freeze({ ensureInitialized, getProfiles, saveProfiles, validateProfiles, getSettings, saveSettings, rememberDomainProfile, getDomainProfile, appendLog, validateRemoteCache, replaceRemoteCache, getFieldRegistry, getSyncState, isSyncStale, recordSyncFailure, setSessionProfile, getSessionProfile, KEYS });
 })(globalThis);

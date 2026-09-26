@@ -3,14 +3,20 @@
   "name": "MAG — Human-Reviewed Autofill",
   "version": "1.1.0",
   "description": "Securely syncs approved MAG profiles and maps them to public-facing forms for human review and manual submission.",
-  "permissions": ["storage", "activeTab"],
+  "permissions": ["storage", "activeTab", "sidePanel"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "src/background/service-worker.js"
   },
   "action": {
-    "default_title": "MAG Autofill Assistant",
-    "default_popup": "src/popup/popup.html"
+    "default_title": "MAG Autofill Assistant"
+  },
+  "side_panel": { "default_path": "src/sidepanel/sidepanel.html" },
+  "commands": {
+    "autofill-active-profile": {
+      "suggested_key": { "default": "Ctrl+Shift+Y", "mac": "Command+Shift+Y" },
+      "description": "Autofill the active MAG profile on the current page"
+    }
   },
   "options_page": "src/options/options.html",
   "content_scripts": [
@@ -18,7 +24,6 @@
       "matches": ["<all_urls>"],
       "js": [
         "src/shared/constants.js",
-        "src/data/initial-profiles.js",
         "src/core/normalize.js",
         "src/shared/dynamic-registry.js",
         "src/adapters/site-adapters.js",
