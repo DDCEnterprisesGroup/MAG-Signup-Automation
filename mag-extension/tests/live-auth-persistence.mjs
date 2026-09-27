@@ -91,14 +91,15 @@ try {
     { loginMessage, profiles: facts.profiles, statuses: facts.statuses, tokensInChromeStorage: facts.tokensInChromeStorage, expiresInMin: facts.expiresInMin });
   record("T12/T13 statuses: non-ARCHIVED visible, no ARCHIVED, no restricted fields cached", facts.archivedCached === 0 && facts.restrictedCached === 0, { statuses: facts.statuses, activeProfiles: facts.sync.activeProfiles });
 
-  // T12 live: a non-ACTIVE profile is rejected for autofill before any network or page action.
-  const reviewId = await worker.evaluate(async () => ((await chrome.storage.local.get("remoteProfiles")).remoteProfiles || []).find((profile) => profile.status && profile.status !== "ACTIVE")?.id || null);
+  // T12 live: a READY_FOR_REVIEW profile passes the status guard. The active
+  // tab here is an extension page, so the fill itself stops at "page access".
+  const reviewId = await worker.evaluate(async () => ((await chrome.storage.local.get("remoteProfiles")).remoteProfiles || []).find((profile) => profile.status === "READY_FOR_REVIEW")?.id || null);
   if (reviewId) {
     await worker.evaluate((id) => MAG.Storage.setSessionProfile(id), reviewId);
-    const blocked = await options.evaluate(() => chrome.runtime.sendMessage({ type: "MAG_AUTOFILL_ACTIVE" }));
-    record("T12 non-ACTIVE profile blocked from autofill", blocked.ok === false && /not approved for autofill/.test(blocked.error), { error: blocked.error });
+    const attempt = await options.evaluate(() => chrome.runtime.sendMessage({ type: "MAG_AUTOFILL_ACTIVE" }));
+    record("T12 READY_FOR_REVIEW profile allowed past the status guard", !/not ready for autofill/.test(attempt.error || ""), { ok: attempt.ok, error: attempt.error });
     await worker.evaluate(() => MAG.Storage.setSessionProfile(""));
-  } else record("T12 non-ACTIVE profile blocked from autofill", null, { note: "no non-ACTIVE profile present in production" });
+  } else record("T12 READY_FOR_REVIEW profile allowed past the status guard", null, { note: "no READY_FOR_REVIEW profile present in production" });
 
   // T2: side panel close/reopen — the panel page renders cache and stays signed in.
   const firstFp = facts.refreshFp;

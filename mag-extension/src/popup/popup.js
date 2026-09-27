@@ -46,7 +46,7 @@
       const option = document.createElement("option");
       option.value = profile.id;
       // Synced workflow profiles are visible before approval; label them so
-      // it is clear they cannot autofill until ACTIVE.
+      // their workflow status is visible (DRAFT/INCOMPLETE cannot autofill).
       const pending = profile.sync?.source === "SUPABASE" && profile.status && profile.status !== "ACTIVE";
       option.textContent = pending ? `${profile.label} · ${statusLabel(profile.status)}` : profile.label;
       elements.profile.append(option);

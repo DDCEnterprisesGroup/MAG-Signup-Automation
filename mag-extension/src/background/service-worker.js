@@ -87,6 +87,8 @@ async function authorizedValuesFor(profile) {
   return values;
 }
 
+const AUTOFILL_READY_STATUSES = new Set(["READY_FOR_REVIEW", "ACTIVE"]);
+
 async function autofillActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active browser tab is available.");
@@ -95,15 +97,13 @@ async function autofillActiveTab() {
   const profile = profiles.find((item) => item.id === selectedId);
   if (!profile) throw new Error("Choose a MAG profile in the side panel first.");
 
-  // Synced workflow profiles may be visible before approval, but only an
-  // ACTIVE Supabase profile is authorized for autofill.
+  // Synced profiles autofill once they are complete enough for review;
+  // DRAFT, INCOMPLETE and any other status stay blocked.
   if (
     profile.sync?.source === "SUPABASE" &&
-    profile.status !== "ACTIVE"
+    !AUTOFILL_READY_STATUSES.has(profile.status)
   ) {
-    throw new Error(
-      "This profile is not approved for autofill yet. Review and activate it in MAG first."
-    );
+    throw new Error("This profile is not ready for autofill yet.");
   }
 
   const settings = await MAG.Storage.getSettings();

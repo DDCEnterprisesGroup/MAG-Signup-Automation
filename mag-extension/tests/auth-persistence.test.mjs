@@ -260,13 +260,14 @@ test("T9 network and server failures keep the session and cache, record a safe c
   assert.equal(worker.syncState().lastErrorCode, undefined, "recovered state clears the error");
 });
 
-test("T10/T11/T12/T13/T14 periodic sync picks up edits, new, review and archived profiles; only ACTIVE autofills", async () => {
+test("T10/T11/T12/T13/T14 periodic sync picks up edits, new, review and archived profiles; READY_FOR_REVIEW and ACTIVE autofill", async () => {
   const { backend, worker } = await signedIn();
   const auditsAfterLogin = backend.audits.length;
   await worker.fireAlarm();
   assert.equal(backend.audits.length, auditsAfterLogin, "an unchanged background sync writes no audit row");
   backend.profiles[1] = { ...backend.profiles[1], label: "Rico Rollins (edited)", profile_version: 4, updated_at: "2026-09-26T12:00:00Z" };
   backend.profiles.push({ id: "33333333-cccc", label: "New Draft Customer", profile_type: "PERSON", status: "DRAFT", profile_scope: "CUSTOMER", profile_version: 1, updated_at: "2026-09-26T12:01:00Z" });
+  backend.profiles.push({ id: "44444444-dddd", label: "Incomplete Customer", profile_type: "PERSON", status: "INCOMPLETE", profile_scope: "CUSTOMER", profile_version: 1, updated_at: "2026-09-26T12:02:00Z" });
   await worker.fireAlarm(); // no Sync click
   const cache = worker.remoteProfiles();
   assert.ok(cache.some((item) => item.label === "Rico Rollins (edited)"), "T10 edit synced automatically");
@@ -275,9 +276,14 @@ test("T10/T11/T12/T13/T14 periodic sync picks up edits, new, review and archived
   assert.equal(review.status, "READY_FOR_REVIEW", "T12 visible with status");
   assert.equal(JSON.stringify(cache).includes("ssn"), false, "restricted fields never cached");
   await MAG.Storage.setSessionProfile(review.id);
-  const blocked = await worker.send({ type: "MAG_AUTOFILL_ACTIVE" });
-  assert.equal(blocked.ok, false);
-  assert.match(blocked.error, /not approved for autofill yet/);
+  const reviewed = await worker.send({ type: "MAG_AUTOFILL_ACTIVE" });
+  assert.equal(reviewed.ok, true, "T12 READY_FOR_REVIEW profile autofills");
+  for (const id of ["supabase:33333333-cccc", "supabase:44444444-dddd"]) {
+    await MAG.Storage.setSessionProfile(id);
+    const blocked = await worker.send({ type: "MAG_AUTOFILL_ACTIVE" });
+    assert.equal(blocked.ok, false, `${id} (DRAFT/INCOMPLETE) is blocked`);
+    assert.equal(blocked.error, "This profile is not ready for autofill yet.");
+  }
   await MAG.Storage.setSessionProfile("supabase:22222222-bbbb");
   const allowed = await worker.send({ type: "MAG_AUTOFILL_ACTIVE" });
   assert.equal(allowed.ok, true, "T13 ACTIVE profile autofills");
@@ -285,6 +291,10 @@ test("T10/T11/T12/T13/T14 periodic sync picks up edits, new, review and archived
   await worker.fireAlarm();
   assert.equal(worker.remoteProfiles().some((item) => item.id === "supabase:22222222-bbbb"), false, "T14 archived profile removed");
   assert.equal(worker.syncState().removedProfiles, 1);
+  await MAG.Storage.setSessionProfile("supabase:22222222-bbbb");
+  const archived = await worker.send({ type: "MAG_AUTOFILL_ACTIVE" });
+  assert.equal(archived.ok, false, "archived profile is no longer available to autofill");
+  assert.match(archived.error, /Choose a MAG profile/);
 });
 
 test("logout revokes only this session and leaves no tokens behind", async () => {
