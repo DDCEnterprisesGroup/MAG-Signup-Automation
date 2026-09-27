@@ -1,6 +1,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
 import { bearer, corsHeaders, json, jwtPayload, safeErrorCode } from "../_shared/http.ts";
 
+const SESSION_RELEASABLE_KEYS = new Set(["date_of_birth"]);
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "METHOD_NOT_ALLOWED" }, 405);
@@ -15,9 +17,14 @@ Deno.serve(async (req) => {
     actorId = userData.user.id;
     const claims = jwtPayload(token);
     const issuedAt = Number(claims.iat || 0);
-    if (claims.aal !== "aal2" || !issuedAt || Date.now() / 1000 - issuedAt > 600) throw new Error("RECENT_MFA_REQUIRED");
     const body = await req.json();
     if (!body?.profileId || !body?.canonicalKey) throw new Error("INVALID_REQUEST");
+    // Date of birth (SENSITIVE) is released to a signed-in member for an
+    // explicit Autofill; every RESTRICTED value (SSN, financial) still needs a
+    // recent MFA (AAL2) session. The class comes from the registry, never the client.
+    const { data: definition } = await admin.from("mag_field_definitions").select("security_class").eq("canonical_key", body.canonicalKey).eq("active", true).maybeSingle();
+    const sessionReleasable = SESSION_RELEASABLE_KEYS.has(body.canonicalKey) && definition?.security_class === "SENSITIVE";
+    if (!sessionReleasable && (claims.aal !== "aal2" || !issuedAt || Date.now() / 1000 - issuedAt > 600)) throw new Error("RECENT_MFA_REQUIRED");
     const { data, error } = await admin.rpc("mag_read_restricted_value", {
       p_actor_id: actorId, p_profile_id: body.profileId, p_canonical_key: body.canonicalKey,
     });

@@ -37,5 +37,27 @@
     };
   }
 
-  MAG.Normalize = Object.freeze({ normalizeText, confidenceLevel, getPath, unique, splitFullName });
+  // A US number as its 10 national digits ("" when it is not one): a leading
+  // country code 1 is accepted, anything else (other lengths/countries) is not
+  // normalized so it can only match exactly.
+  function usPhoneDigits(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+    return digits.length === 10 ? digits : "";
+  }
+
+  // Whether a value already on the page is the same as the profile value.
+  function equivalentValue(semantic, pageValue, profileValue) {
+    const page = String(pageValue ?? "").trim();
+    const approved = String(profileValue ?? "").trim();
+    if (!page || !approved) return false;
+    if (page === approved) return true;
+    if (semantic === "PHONE") {
+      const pageDigits = usPhoneDigits(page);
+      return Boolean(pageDigits) && pageDigits === usPhoneDigits(approved);
+    }
+    return false;
+  }
+
+  MAG.Normalize = Object.freeze({ normalizeText, confidenceLevel, getPath, unique, splitFullName, usPhoneDigits, equivalentValue });
 })(globalThis);

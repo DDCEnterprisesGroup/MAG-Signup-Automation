@@ -56,6 +56,14 @@ function fakeSupabase() {
       state.refreshTokens.clear(); state.logoutScope = parsed.searchParams.get("scope");
       return json(204, null);
     }
+    if (parsed.pathname === "/functions/v1/mag-restricted-value") {
+      if (!tokenValid) return json(401, { error: "AUTH_REQUIRED" });
+      const { canonicalKey } = JSON.parse(options.body);
+      state.restrictedCalls = [...(state.restrictedCalls || []), canonicalKey];
+      // Deployed rule: SENSITIVE DOB at AAL1 on explicit autofill; RESTRICTED needs recent MFA.
+      if (canonicalKey === "date_of_birth") return json(200, { value: "1985-03-07", maskedHint: "••/••/1985", classification: "SENSITIVE" });
+      return json(403, { error: "RECENT_MFA_REQUIRED" });
+    }
     if (parsed.pathname.startsWith("/rest/v1/")) {
       if (!tokenValid) return json(401, { message: "JWT expired" });
       state.restCalls.push(target);
@@ -106,7 +114,7 @@ async function startWorker(browser, backend, { event } = {}) {
     sidePanel: { setPanelBehavior: async () => {} },
     action: { setBadgeBackgroundColor: async () => {}, setBadgeText: async () => {}, setTitle: async () => {} },
     commands: { onCommand: { addListener() {} } },
-    tabs: { query: async () => [{ id: 7 }], sendMessage: async (_tab, message) => ({ ok: true, summary: { filled: 1, profile: message.profile.id } }) }
+    tabs: { query: async () => [{ id: 7 }], sendMessage: async (_tab, message) => { browser.sent = [...(browser.sent || []), message]; return { ok: true, summary: { filled: 1, profile: message.profile.id } }; } }
   };
   globalThis.MAG = { AuthVault: { get: async (key) => structuredClone(browser.vault.get(key)), set: async (key, value) => { browser.vault.set(key, structuredClone(value)); }, remove: async (key) => { browser.vault.delete(key); } } };
   const sources = { "../shared/constants.js": await read("src/shared/constants.js"), "../shared/storage.js": await read("src/shared/storage.js"), "../shared/supabase-config.js": await read("src/shared/supabase-config.js"), "supabase-client.js": await read("src/background/supabase-client.js"), "sync-engine.js": await read("src/background/sync-engine.js") };
@@ -295,6 +303,23 @@ test("T10/T11/T12/T13/T14 periodic sync picks up edits, new, review and archived
   const archived = await worker.send({ type: "MAG_AUTOFILL_ACTIVE" });
   assert.equal(archived.ok, false, "archived profile is no longer available to autofill");
   assert.match(archived.error, /Choose a MAG profile/);
+});
+
+test("T3 DOB is fetched only on explicit Autofill, reaches the page, and is never cached; SSN stays blocked", async () => {
+  const { backend, browser, worker } = await signedIn();
+  await worker.fireAlarm();
+  await worker.send({ type: "MAG_SYNC_PROFILES", force: true });
+  assert.equal(backend.restrictedCalls, undefined, "sync never requests protected values");
+  await MAG.Storage.setSessionProfile("supabase:22222222-bbbb");
+  const result = await worker.send({ type: "MAG_AUTOFILL_ACTIVE" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(backend.restrictedCalls, ["date_of_birth", "ssn"], "requested only on the explicit Autofill action");
+  const sent = browser.sent.at(-1);
+  assert.equal(sent.authorizedValues.date_of_birth, "1985-03-07", "DOB handed to the page for this fill");
+  assert.equal("ssn" in sent.authorizedValues, false, "SSN still refused without recent MFA");
+  const persisted = JSON.stringify({ local: browser.local, session: browser.session, vault: [...browser.vault.values()] });
+  assert.equal(persisted.includes("1985-03-07"), false, "DOB is not written to any extension storage");
+  assert.equal(JSON.stringify(worker.remoteProfiles()).includes("date_of_birth"), false, "no DOB key in the cached profiles");
 });
 
 test("logout revokes only this session and leaves no tokens behind", async () => {

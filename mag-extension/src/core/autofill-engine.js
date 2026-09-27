@@ -79,6 +79,32 @@
     };
   }
 
+  // Stored dates may be YYYY-MM-DD, MM/DD/YYYY or MM-DD-YYYY. Anything that is
+  // not a real calendar date returns null so it is never filled.
+  function parseDate(raw) {
+    const text = String(raw).trim();
+    const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text);
+    const us = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(text);
+    const [year, month, day] = iso ? [iso[1], iso[2], iso[3]].map(Number) : us ? [us[3], us[1], us[2]].map(Number) : [];
+    if (!year) return null;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day || year < 1900 || date > new Date()) return null;
+    const pad = (value) => String(value).padStart(2, "0");
+    return { year: String(year), month: pad(month), day: pad(day) };
+  }
+
+  // Native date inputs take YYYY-MM-DD; text inputs get MM/DD/YYYY unless the
+  // field's own hint asks for dashes or ISO order.
+  function formatDateFor(field, date) {
+    if (field.type === "date") return `${date.year}-${date.month}-${date.day}`;
+    const hint = [field.placeholder, field.label, field.ariaLabel, field.nearbyText].join(" ").toLowerCase();
+    if (/y{4}\s*-\s*mm\s*-\s*dd/.test(hint)) return `${date.year}-${date.month}-${date.day}`;
+    if (/mm\s*-\s*dd\s*-\s*y{4}/.test(hint)) return `${date.month}-${date.day}-${date.year}`;
+    return `${date.month}/${date.day}/${date.year}`;
+  }
+
+  // Returns the value to fill, "" when none was provided, or null when a
+  // provided value cannot be used safely.
   function authorizedValue(classification, field, authorizedValues) {
     if (!classification?.canonicalKey || !authorizedValues) return "";
     const raw = authorizedValues[classification.canonicalKey];
@@ -88,9 +114,9 @@
       const digits = String(raw).replace(/\D/g, "");
       return digits.length === 9 ? `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}` : String(raw);
     }
-    if (key === "date_of_birth" && field.type === "date") {
-      const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(raw));
-      return match ? `${match[3]}-${match[1].padStart(2, "0")}-${match[2].padStart(2, "0")}` : String(raw);
+    if (key === "date_of_birth") {
+      const date = parseDate(raw);
+      return date ? formatDateFor(field, date) : null;
     }
     return String(raw);
   }
@@ -108,7 +134,9 @@
       const originalValue = MAG.FieldDetector.currentValue(field.element);
       let status = "REVIEW";
       let reason = "Review this suggestion.";
-      if (classification.protected && !authorized) {
+      if (authorized === null) {
+        reason = "The stored date of birth could not be read safely. Enter it manually.";
+      } else if (classification.protected && !authorized) {
         reason = classification.restricted ? "Restricted information requires re-authentication and explicit Fill approval." : "Human-controlled field. MAG will not fill it.";
       } else if (authorized) {
         status = "REVIEW";
@@ -116,6 +144,9 @@
       } else if (!mapping.value) {
         status = field.required ? "MISSING" : "REVIEW";
         reason = field.required ? "Required field has no approved profile value." : "No approved profile value is stored.";
+      } else if (originalValue && MAG.Normalize.equivalentValue(classification.semantic, originalValue, mapping.value)) {
+        status = "FILLED";
+        reason = "Page value already matches approved profile data.";
       } else if (!mapping.fits) {
         reason = `Shortest approved variant exceeds the ${field.maxlength}-character limit.`;
       } else if (originalValue && settings.preserveExistingValues) {
@@ -134,9 +165,17 @@
           if (!event.isTrusted) return;
           const current = records.get(field.fieldId);
           if (current) {
-            current.reason = "Manually edited; review retained.";
             ownership.delete(field.fieldId);
-            setHighlight(current, "REVIEW");
+            // Re-entering the same value (e.g. by the browser's own autofill)
+            // is not a manual change.
+            const unlocked = !current.classification.protected || current.authorizationApproved;
+            if (unlocked && MAG.Normalize.equivalentValue(current.classification.semantic, MAG.FieldDetector.currentValue(field.element), current.mapping.value)) {
+              current.reason = "Matches approved profile data.";
+              setHighlight(current, "FILLED");
+            } else {
+              current.reason = "Manually edited; review retained.";
+              setHighlight(current, "REVIEW");
+            }
           }
         });
       }
@@ -148,6 +187,8 @@
     if (!record || (record.classification.protected && !record.authorizationApproved) || !record.mapping.value || !record.mapping.fits) return false;
     if (record.field.disabled || record.field.readOnly) return false;
     if (!force && record.originalValue && settings.preserveExistingValues) return false;
+    // An equivalent page value is kept as typed, never reformatted.
+    if (!force && MAG.Normalize.equivalentValue(record.classification.semantic, record.originalValue, record.mapping.value)) return false;
     if (!setControlValue(record.element, record.mapping.value)) return false;
     record.changedByMag = true;
     ownership.set(record.field.fieldId, {
