@@ -39,3 +39,8 @@ button:focus-visible, select:focus-visible { outline: 3px solid #70a0ff; outline
 .mini-actions button { padding: 5px 8px; font-size: 11px; background: #edf1f7; color: #243653; }
 #message { min-height: 24px; padding: 0 4px 8px; color: #7a3511; font-size: 12px; }
 footer { padding: 10px 16px; border-top: 1px solid #dde2ec; background: #fff8e6; color: #623e00; font-size: 11px; font-weight: 700; }
+.password-output { width: 100%; padding: 10px; border: 1px solid #b9c2d3; border-radius: 8px; background: #f5f7fb; font: 600 15px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; color: #102454; }
+.password-options { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 0; font-size: 12px; color: #414b5f; }
+.password-options label { display: flex; align-items: center; gap: 6px; }
+.password-options select { width: auto; padding: 6px 8px; }
+.password-status { margin: 8px 0 0; min-height: 15px; }
