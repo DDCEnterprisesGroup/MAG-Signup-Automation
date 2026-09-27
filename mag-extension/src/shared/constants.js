@@ -2,7 +2,7 @@
   "use strict";
   const MAG = (root.MAG = root.MAG || {});
 
-  MAG.VERSION = "1.1.0";
+  MAG.VERSION = "1.1.1";
   // Keep retrieval and filling closed until Dre completes live AAL2 acceptance.
   MAG.RESTRICTED_AUTOFILL_ENABLED = false;
   // Background profile sync cadence (chrome.alarms) and cache staleness window.
