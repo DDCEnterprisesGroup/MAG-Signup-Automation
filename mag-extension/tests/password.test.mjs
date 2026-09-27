@@ -88,3 +88,57 @@ test("side panel: generate, reuse within the session, length, copy, never persis
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("password fill: explicit action fills new-password fields only, survives Autofill, cleared by Reset", async () => {
+  const { createServer } = await import("node:http");
+  const server = createServer(async (request, response) => {
+    try { response.setHeader("content-type", "text/html"); response.end(await readFile(path.join(root, "fixtures", "password-signup.html"))); }
+    catch { response.statusCode = 404; response.end(); }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mag-password-fill-"));
+  const context = await chromium.launchPersistentContext(dir, { channel: "chromium", headless: true, args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`] });
+  try {
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+    const panel = await context.newPage();
+    await panel.goto(`chrome-extension://${new URL(worker.url()).host}/src/sidepanel/sidepanel.html`);
+    await panel.waitForFunction(() => document.querySelector("#password-output").value);
+    const password = await panel.locator("#password-output").inputValue();
+    const form = await context.newPage();
+    await form.goto(`http://127.0.0.1:${server.address().port}/password-signup.html`);
+    await form.evaluate(() => { window.__submits = 0; document.querySelectorAll("form").forEach((f) => f.addEventListener("submit", (e) => { window.__submits += 1; e.preventDefault(); })); });
+    await form.waitForTimeout(500);
+    const value = (name) => form.locator(`[name="${name}"]`).inputValue();
+
+    // Profile Autofill alone never fills password fields.
+    await form.bringToFront();
+    await panel.evaluate(async () => { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); await chrome.tabs.sendMessage(tab.id, { type: MAG.MESSAGE.AUTOFILL, profile: { id: "p", label: "P", person: { email: "a@example.invalid" } }, settings: MAG.DEFAULT_SETTINGS }); });
+    assert.equal(await value("new_password"), "", "Autofill does not fill passwords");
+
+    // Explicit Fill (from the panel button's handler, with the form as active tab).
+    await panel.evaluate(() => { navigator.clipboard.writeText = async (text) => { window.__copied = text; }; });
+    await form.bringToFront();
+    await panel.locator("#password-fill").dispatchEvent("click");
+    await panel.waitForFunction(() => /Filled/.test(document.querySelector("#password-status").textContent));
+    assert.equal(await value("new_password"), password);
+    assert.equal(await value("confirm_password"), password, "confirmation field gets the same password");
+    assert.equal(await value("current_password"), "", "login (current-password) field untouched");
+    assert.equal(await value("honeypot_password"), "", "hidden field untouched");
+    assert.equal(await value("disabled_password"), "", "disabled field untouched");
+    assert.match(await panel.locator("#password-status").textContent(), /Filled 2 password fields and copied/);
+    assert.equal(await panel.evaluate(() => window.__copied), password, "also copied so it is not lost");
+    assert.equal(await form.locator('[name="new_password"]').getAttribute("data-mag-status"), "FILLED");
+
+    // A later profile Autofill keeps the password; Reset clears it.
+    await panel.evaluate(async () => { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); await chrome.tabs.sendMessage(tab.id, { type: MAG.MESSAGE.AUTOFILL, profile: { id: "p2", label: "P2", person: { email: "b@example.invalid" } }, settings: MAG.DEFAULT_SETTINGS }); });
+    assert.equal(await value("new_password"), password, "Autofill does not wipe the filled password");
+    await panel.evaluate(async () => { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); await chrome.tabs.sendMessage(tab.id, { type: MAG.MESSAGE.RESET }); });
+    assert.equal(await value("new_password"), "", "Reset MAG changes clears it");
+    assert.equal(await value("confirm_password"), "");
+    assert.equal(await form.evaluate(() => window.__submits), 0, "never submits");
+  } finally {
+    await context.close();
+    await rm(dir, { recursive: true, force: true });
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

@@ -37,6 +37,7 @@
       else if (message.type === MAG.MESSAGE.RESET) sendResponse({ ok: true, summary: MAG.AutofillEngine.reset() });
       else if (message.type === MAG.MESSAGE.FIELD_ACTION) sendResponse({ ok: true, summary: MAG.AutofillEngine.fieldAction(message.fieldId, message.action) });
       else if (message.type === MAG.MESSAGE.GET_STATUS) sendResponse({ ok: true, summary: MAG.AutofillEngine.summary() });
+      else if (message.type === MAG.MESSAGE.FILL_PASSWORD) sendResponse({ ok: true, ...MAG.AutofillEngine.fillPasswords(message.password) });
       else if (message.type === MAG.MESSAGE.FILL_RESTRICTED) sendResponse({ ok: true, summary: MAG.AutofillEngine.fillRestricted(message.fieldId, message.plaintext) });
       else return false;
     } catch (error) {

@@ -3,7 +3,8 @@
   const elements = {
     output: document.getElementById("password-output"), length: document.getElementById("password-length"),
     symbols: document.getElementById("password-symbols"), generate: document.getElementById("password-generate"),
-    copy: document.getElementById("password-copy"), status: document.getElementById("password-status")
+    copy: document.getElementById("password-copy"), fill: document.getElementById("password-fill"),
+    status: document.getElementById("password-status")
   };
   if (!elements.output) return;
   // The last password is kept only for this browser session so it can be
@@ -35,6 +36,23 @@
     setStatus("Copied to clipboard.");
   }
 
+  // Explicit click only: MAG's profile Autofill never fills password fields.
+  async function fill() {
+    if (!elements.output.value) await generate();
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    let result;
+    try {
+      result = tab?.id ? await chrome.tabs.sendMessage(tab.id, { type: MAG.MESSAGE.FILL_PASSWORD, password: elements.output.value }) : null;
+    } catch { result = null; }
+    if (!result?.ok) { setStatus("MAG can't reach this page. Refresh the page and try again."); return; }
+    if (result.filled) {
+      // MAG does not save the password, so keep it on the clipboard as well.
+      const copied = await navigator.clipboard.writeText(elements.output.value).then(() => true, () => false);
+      setStatus(`Filled ${result.filled} password field${result.filled === 1 ? "" : "s"}${copied ? " and copied the password" : ". Copy the password before you submit"}.`);
+    }
+    else setStatus(result.skippedLogin ? "Only a login password field is here; MAG leaves those alone." : "No password field found on this page.");
+  }
+
   async function restore() {
     let saved = null;
     try { saved = (await chrome.storage.session?.get(STORAGE_KEY))?.[STORAGE_KEY] || null; } catch { saved = null; }
@@ -50,6 +68,7 @@
 
   elements.generate.addEventListener("click", () => generate().catch(() => setStatus("Could not generate a password.")));
   elements.copy.addEventListener("click", () => copy());
+  elements.fill.addEventListener("click", () => fill());
   elements.length.addEventListener("change", () => generate());
   elements.symbols.addEventListener("change", () => generate());
   restore();

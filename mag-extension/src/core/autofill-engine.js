@@ -215,7 +215,9 @@
   function restoreOwnedValues(nextProfileId = "") {
     for (const [fieldId, owned] of ownership) {
       if (nextProfileId && owned.profileId === nextProfileId) continue;
-      if (MAG.FieldDetector.currentValue(owned.element) === owned.filledValue) setControlValue(owned.element, owned.originalValue);
+      // A generated password survives profile Autofill; only Reset clears it.
+      if (nextProfileId && owned.password) continue;
+      if (MAG.FieldDetector.currentValue(owned.element) === owned.filledValue) (owned.password ? writePassword : setControlValue)(owned.element, owned.originalValue);
       owned.element.classList.remove("mag-field-filled", "mag-field-review", "mag-field-missing", "mag-field-skipped");
       delete owned.element.dataset.magStatus;
       ownership.delete(fieldId);
@@ -256,6 +258,40 @@
     return summary();
   }
 
+  // setControlValue deliberately refuses password inputs; this writer is used
+  // only by the explicit "Fill password fields" action and its Reset.
+  function writePassword(element, value) {
+    element.value = value;
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+
+  // Explicit user action from the side panel's password generator: fills
+  // visible, editable new-password fields (password + confirmation). Login
+  // fields marked autocomplete="current-password" are never touched.
+  let nextPasswordId = 1;
+  function fillPasswords(value) {
+    if (typeof value !== "string" || value.length < 8) return { filled: 0, skippedLogin: 0 };
+    ensureStyles();
+    const inputs = [...document.querySelectorAll('input[type="password"]')]
+      .filter((element) => !element.disabled && !element.readOnly && MAG.FieldDetector.isVisible(element));
+    const login = inputs.filter((element) => /current-password/i.test(element.getAttribute("autocomplete") || ""));
+    let filled = 0;
+    for (const element of inputs.filter((item) => !login.includes(item))) {
+      if (!element.dataset.magFieldId) element.dataset.magFieldId = `mag-password-${nextPasswordId++}`;
+      const fieldId = element.dataset.magFieldId;
+      const originalValue = ownership.has(fieldId) ? ownership.get(fieldId).originalValue : element.value;
+      writePassword(element, value);
+      ownership.set(fieldId, { element, originalValue, filledValue: value, profileId: "", password: true });
+      element.classList.remove("mag-field-review", "mag-field-missing", "mag-field-skipped");
+      element.classList.add("mag-field-filled");
+      element.dataset.magStatus = "FILLED";
+      filled += 1;
+    }
+    return { filled, skippedLogin: login.length };
+  }
+
   function reset() {
     restoreOwnedValues();
     for (const record of records.values()) {
@@ -267,5 +303,5 @@
     return summary();
   }
 
-  MAG.AutofillEngine = Object.freeze({ analyze, autofill, summary, fieldAction, fillRestricted, reset, setControlValue });
+  MAG.AutofillEngine = Object.freeze({ analyze, autofill, summary, fieldAction, fillRestricted, fillPasswords, reset, setControlValue });
 })(globalThis);

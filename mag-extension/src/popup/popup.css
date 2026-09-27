@@ -44,3 +44,4 @@ footer { padding: 10px 16px; border-top: 1px solid #dde2ec; background: #fff8e6;
 .password-options label { display: flex; align-items: center; gap: 6px; }
 .password-options select { width: auto; padding: 6px 8px; }
 .password-status { margin: 8px 0 0; min-height: 15px; }
+.password-fill { width: 100%; margin-top: 8px; }
